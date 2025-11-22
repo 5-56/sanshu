@@ -256,8 +256,21 @@ pub async fn get_acemcp_config(state: State<'_, AppState>) -> Result<AcemcpConfi
         token: config.mcp_config.acemcp_token.clone(),
         batch_size: config.mcp_config.acemcp_batch_size.unwrap_or(10),
         max_lines_per_blob: config.mcp_config.acemcp_max_lines_per_blob.unwrap_or(800),
+        // 默认文件扩展名列表（与前端 McpToolsTab.vue 保持一致）
+        // 用户首次打开设置界面时，所有扩展名默认全部勾选
         text_extensions: config.mcp_config.acemcp_text_extensions.clone().unwrap_or_else(|| {
-            vec![".rs".to_string(), ".ts".to_string(), ".js".to_string(), ".md".to_string(), ".toml".to_string()]
+            vec![
+                ".py".to_string(), ".js".to_string(), ".ts".to_string(),
+                ".jsx".to_string(), ".tsx".to_string(), ".java".to_string(),
+                ".go".to_string(), ".rs".to_string(), ".cpp".to_string(),
+                ".c".to_string(), ".h".to_string(), ".hpp".to_string(),
+                ".cs".to_string(), ".rb".to_string(), ".php".to_string(),
+                ".md".to_string(), ".txt".to_string(), ".json".to_string(),
+                ".yaml".to_string(), ".yml".to_string(), ".toml".to_string(),
+                ".xml".to_string(), ".html".to_string(), ".css".to_string(),
+                ".scss".to_string(), ".sql".to_string(), ".sh".to_string(),
+                ".bash".to_string()
+            ]
         }),
         exclude_patterns: config.mcp_config.acemcp_exclude_patterns.clone().unwrap_or_else(|| {
             vec!["node_modules".to_string(), ".git".to_string(), "target".to_string(), "dist".to_string()]
