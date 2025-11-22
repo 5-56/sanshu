@@ -1,0 +1,285 @@
+name: Build CLI Tools
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-cli:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            name: macos-aarch64
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            name: macos-x86_64
+          - platform: ubuntu-22.04
+            args: ''
+            name: linux-x86_64
+          - platform: windows-latest
+            args: ''
+            name: windows-x86_64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libgdk-pixbuf2.0-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libcairo-gobject2 \
+            libjavascriptcoregtk-4.1-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libjack-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build with Tauri (no bundle)
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            if [[ "${{ matrix.args }}" == *"aarch64"* ]]; then
+              cargo tauri build --target aarch64-apple-darwin --no-bundle
+            else
+              cargo tauri build --target x86_64-apple-darwin --no-bundle
+            fi
+          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            cargo tauri build --no-bundle
+          else
+            # Linux build - 移除静态链接标志以避免 proc-macro 编译问题
+            cargo tauri build --no-bundle
+          fi
+
+      - name: Create CLI package
+        shell: bash
+        run: |
+          mkdir -p cli-package
+
+          # 获取完整的 tag 名称
+          TAG_NAME="${{ github.ref_name }}"
+
+          # 确定目标目录
+          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            if [[ "${{ matrix.args }}" == *"aarch64"* ]]; then
+              TARGET_DIR="target/aarch64-apple-darwin/release"
+            else
+              TARGET_DIR="target/x86_64-apple-darwin/release"
+            fi
+          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            TARGET_DIR="target/release"
+          else
+            TARGET_DIR="target/release"
+          fi
+
+          # 复制二进制文件
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            cp "$TARGET_DIR/等一下.exe" cli-package/
+            cp "$TARGET_DIR/寸止.exe" cli-package/
+            cd cli-package
+            7z a ../cunzhi-cli-${TAG_NAME}-${{ matrix.name }}.zip *
+          else
+            cp "$TARGET_DIR/等一下" cli-package/
+            cp "$TARGET_DIR/寸止" cli-package/
+            cd cli-package
+            tar -czf ../cunzhi-cli-${TAG_NAME}-${{ matrix.name }}.tar.gz *
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cunzhi-cli-${{ matrix.name }}
+          path: |
+            cunzhi-cli-*.tar.gz
+            cunzhi-cli-*.zip
+          if-no-files-found: ignore
+
+  release:
+    name: Create Release
+    needs: build-cli
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Verify version consistency
+        run: |
+          # 获取 git tag 版本号（去掉 v 前缀）
+          TAG_NAME="${{ github.ref_name }}"
+          TAG_VERSION_NUMBER=${TAG_NAME#v}
+
+          # 从项目文件读取版本号
+          if [ -f "version.json" ]; then
+            PROJECT_VERSION=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' version.json | cut -d'"' -f4)
+          elif [ -f "Cargo.toml" ]; then
+            PROJECT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+          else
+            echo "Warning: No version file found, skipping version check"
+            exit 0
+          fi
+
+          echo "Git tag version: ${TAG_VERSION_NUMBER}"
+          echo "Project file version: ${PROJECT_VERSION}"
+
+          # 检查版本是否一致
+          if [ "${TAG_VERSION_NUMBER}" != "${PROJECT_VERSION}" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "Git tag version: ${TAG_VERSION_NUMBER}"
+            echo "Project file version: ${PROJECT_VERSION}"
+            echo ""
+            echo "Please ensure the git tag matches the version in project files."
+            echo "You can either:"
+            echo "1. Update project files to match tag: ${TAG_VERSION_NUMBER}"
+            echo "2. Create a new tag that matches project version: v${PROJECT_VERSION}"
+            exit 1
+          fi
+
+          echo "✅ Version consistency check passed: ${TAG_VERSION_NUMBER}"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@git-cliff
+
+      - name: Generate changelog and release title
+        id: changelog
+        run: |
+          # 从 GitHub API 获取最新的 release 版本
+          echo "Fetching latest release from GitHub API..."
+          LATEST_RELEASE=$(curl -s "https://api.github.com/repos/imhuso/cunzhi/releases/latest" | jq -r '.tag_name // empty' 2>/dev/null || echo "")
+
+          if [ -z "$LATEST_RELEASE" ] || [ "$LATEST_RELEASE" = "null" ]; then
+            echo "GitHub API failed or no previous release found, falling back to git tags"
+            # 回退到使用 git tag 获取上一个版本
+            PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
+            if [ -z "$PREVIOUS_TAG" ]; then
+              echo "No previous tags found, generating full changelog"
+            else
+              echo "Found previous tag: $PREVIOUS_TAG"
+            fi
+          else
+            PREVIOUS_TAG="$LATEST_RELEASE"
+            echo "Found previous release: $PREVIOUS_TAG"
+          fi
+
+          echo "Current tag: ${{ github.ref_name }}"
+          echo "Previous version: $PREVIOUS_TAG"
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # 如果没有上一个版本，生成所有提交的 changelog
+            git-cliff --tag ${{ github.ref_name }} --output changelog.md
+          else
+            # 只生成从上一个版本到当前版本的 changelog
+            git-cliff $PREVIOUS_TAG..${{ github.ref_name }} --output changelog.md
+
+            # 添加 Full Changelog 链接
+            echo "" >> changelog.md
+            echo "**Full Changelog**: [$PREVIOUS_TAG...${{ github.ref_name }}](https://github.com/imhuso/cunzhi/compare/$PREVIOUS_TAG...${{ github.ref_name }})" >> changelog.md
+          fi
+
+          # 生成发布标题
+          VERSION_NUMBER="${{ github.ref_name }}"
+          VERSION_NUMBER=${VERSION_NUMBER#v}  # 移除 v 前缀
+
+          # 从最近的提交中提取主要功能作为标题
+          if [ -z "$PREVIOUS_TAG" ]; then
+            COMMIT_RANGE="${{ github.ref_name }}"
+          else
+            COMMIT_RANGE="$PREVIOUS_TAG..${{ github.ref_name }}"
+          fi
+
+          MAIN_FEATURE=$(git log --oneline $COMMIT_RANGE | grep -E "^[a-f0-9]+ (feat|fix)" | head -1 | sed 's/^[a-f0-9]* //' | sed 's/^feat: /✨ /' | sed 's/^fix: /🐞 /')
+
+          if [ -z "$MAIN_FEATURE" ]; then
+            RELEASE_TITLE="$VERSION_NUMBER 📦 版本更新"
+          else
+            RELEASE_TITLE="$VERSION_NUMBER $MAIN_FEATURE"
+          fi
+
+          echo "release_title=$RELEASE_TITLE" >> $GITHUB_OUTPUT
+          echo "Generated release title: $RELEASE_TITLE"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/*/cunzhi-cli-*.tar.gz
+            artifacts/*/cunzhi-cli-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          name: ${{ steps.changelog.outputs.release_title }}
+          body_path: changelog.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Homebrew Formula Update
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          script: |
+            console.log('Triggering Homebrew formula update...');
+
+            try {
+              const response = await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'update-homebrew.yml',
+                ref: 'main',
+                inputs: {
+                  tag_name: '${{ github.ref_name }}'
+                }
+              });
+
+              console.log('✅ Homebrew update workflow triggered successfully');
+            } catch (error) {
+              console.error('❌ Failed to trigger Homebrew update workflow:', error);
+              // 不让这个错误阻止主要的发布流程
+              console.log('Continuing with release process...');
+            }

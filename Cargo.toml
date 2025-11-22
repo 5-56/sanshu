@@ -1,0 +1,76 @@
+[package]
+name = "cunzhi"
+version = "0.4.0"
+edition = "2021"
+default-run = "等一下"
+
+[lib]
+path = "src/rust/lib.rs"
+
+[[bin]]
+name = "等一下"
+path = "src/rust/main.rs"
+
+[[bin]]
+name = "寸止"
+path = "src/rust/bin/mcp_server.rs"
+
+[dependencies]
+tauri = { version = "2.0", features = [
+  "tray-icon",
+  "image-ico",
+  "image-png"
+] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-updater = "2.0"
+serde = { version = "1.0", features = [ "derive" ] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = [
+  "rt-multi-thread", # MCP服务器和异步任务需要
+  "macros", # #[tokio::main] 宏需要
+  "fs", # 文件操作需要
+  "process", # Command::new() 需要
+  "sync", # oneshot channel 需要
+  "time" # sleep() 需要
+] }
+anyhow = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.0", features = [ "v4" ] }
+chrono = { version = "0.4", features = [ "serde" ] }
+dirs = "5.0"
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = [
+  "server",
+  "transport-io"
+] }
+schemars = "0.8"
+rodio = "0.19"
+reqwest = { version = "0.11", features = [
+  "stream",
+  "json"
+] }
+base64 = "0.21"
+rust-embed = "8.0"
+teloxide = { version = "0.15.0", features = [ "macros" ] }
+regex = "1.0"
+log = "0.4.27"
+env_logger = "0.11.8"
+percent-encoding = "2.3"
+ring = "0.17"
+hex = "0.4"
+ignore = "0.4"
+encoding_rs = "0.8"
+globset = "0.4"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[features]
+default = []
+
+# 发布版本优化配置
+[profile.release]
+opt-level = "z" # 优化体积而非速度
+lto = true # 链接时优化，减少最终二进制大小
+codegen-units = 1 # 减少代码生成单元，提高优化效果
+panic = "abort" # 减少panic处理代码
+strip = true # 移除调试符号

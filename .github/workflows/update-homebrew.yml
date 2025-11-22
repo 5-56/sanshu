@@ -1,0 +1,177 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g., v0.2.3)'
+        required: true
+        type: string
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Get release information
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          else
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+          fi
+
+          VERSION_NUMBER=${TAG_NAME#v}
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+          echo "Release tag: ${TAG_NAME}"
+          echo "Version number: ${VERSION_NUMBER}"
+
+      - name: Verify release assets exist
+        run: |
+          TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
+          VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
+
+          # 检查 release assets 是否存在
+          # URL 格式：/download/{TAG_NAME}/cunzhi-cli-{TAG_NAME}-{platform}.tar.gz
+          INTEL_URL="https://github.com/imhuso/cunzhi/releases/download/${TAG_NAME}/cunzhi-cli-${TAG_NAME}-macos-x86_64.tar.gz"
+          ARM_URL="https://github.com/imhuso/cunzhi/releases/download/${TAG_NAME}/cunzhi-cli-${TAG_NAME}-macos-aarch64.tar.gz"
+
+          echo "Checking Intel asset: $INTEL_URL"
+          if ! curl --head --fail "$INTEL_URL" > /dev/null 2>&1; then
+            echo "❌ Intel asset not found: $INTEL_URL"
+            exit 1
+          fi
+
+          echo "Checking ARM asset: $ARM_URL"
+          if ! curl --head --fail "$ARM_URL" > /dev/null 2>&1; then
+            echo "❌ ARM asset not found: $ARM_URL"
+            exit 1
+          fi
+
+          echo "✅ All release assets verified"
+
+      - name: Calculate SHA256 for release assets
+        id: sha256
+        run: |
+          TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
+          VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
+
+          INTEL_URL="https://github.com/imhuso/cunzhi/releases/download/${TAG_NAME}/cunzhi-cli-${TAG_NAME}-macos-x86_64.tar.gz"
+          ARM_URL="https://github.com/imhuso/cunzhi/releases/download/${TAG_NAME}/cunzhi-cli-${TAG_NAME}-macos-aarch64.tar.gz"
+
+          echo "Downloading and calculating SHA256..."
+
+          # 下载并计算 SHA256
+          curl -L -o /tmp/intel.tar.gz "$INTEL_URL"
+          curl -L -o /tmp/arm.tar.gz "$ARM_URL"
+
+          INTEL_SHA256=$(sha256sum /tmp/intel.tar.gz | cut -d' ' -f1)
+          ARM_SHA256=$(sha256sum /tmp/arm.tar.gz | cut -d' ' -f1)
+
+          echo "intel_sha256=${INTEL_SHA256}" >> $GITHUB_OUTPUT
+          echo "arm_sha256=${ARM_SHA256}" >> $GITHUB_OUTPUT
+          echo "intel_url=${INTEL_URL}" >> $GITHUB_OUTPUT
+          echo "arm_url=${ARM_URL}" >> $GITHUB_OUTPUT
+
+          echo "Intel SHA256: $INTEL_SHA256"
+          echo "ARM SHA256: $ARM_SHA256"
+
+      - name: Checkout homebrew-cunzhi repository
+        uses: actions/checkout@v4
+        with:
+          repository: imhuso/homebrew-cunzhi
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          path: homebrew-tap
+
+      - name: Configure git for homebrew-tap
+        run: |
+          cd homebrew-tap
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Update Homebrew Formula
+        run: |
+          TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
+          VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
+          INTEL_SHA256="${{ steps.sha256.outputs.intel_sha256 }}"
+          ARM_SHA256="${{ steps.sha256.outputs.arm_sha256 }}"
+          INTEL_URL="${{ steps.sha256.outputs.intel_url }}"
+          ARM_URL="${{ steps.sha256.outputs.arm_url }}"
+
+          cd homebrew-tap
+
+          # 确保 Formula 文件存在
+          if [[ ! -f "Formula/cunzhi.rb" ]]; then
+            echo "❌ Error: Formula/cunzhi.rb not found in tap repository"
+            exit 1
+          fi
+
+          echo "Updating Formula with:"
+          echo "  Version: ${VERSION_NUMBER}"
+          echo "  Intel URL: ${INTEL_URL}"
+          echo "  Intel SHA256: ${INTEL_SHA256}"
+          echo "  ARM URL: ${ARM_URL}"
+          echo "  ARM SHA256: ${ARM_SHA256}"
+
+          # 更新版本号
+          sed -i "s|version \".*\"|version \"${VERSION_NUMBER}\"|g" Formula/cunzhi.rb
+
+          # 更新 Intel 版本的 URL 和 SHA256（适配新的 on_intel 语法）
+          sed -i "s|https://github.com/imhuso/cunzhi/releases/download/v[0-9.]*/cunzhi-cli-v[0-9.]*-macos-x86_64.tar.gz|${INTEL_URL}|g" Formula/cunzhi.rb
+          sed -i "/on_intel do/,/end/ { /sha256/ s|sha256[[:space:]]*\".*\"|sha256  \"${INTEL_SHA256}\"|; }" Formula/cunzhi.rb
+
+          # 更新 ARM 版本的 URL 和 SHA256（适配新的 on_arm 语法）
+          sed -i "s|https://github.com/imhuso/cunzhi/releases/download/v[0-9.]*/cunzhi-cli-v[0-9.]*-macos-aarch64.tar.gz|${ARM_URL}|g" Formula/cunzhi.rb
+          sed -i "/on_arm do/,/end/ { /sha256/ s|sha256[[:space:]]*\".*\"|sha256  \"${ARM_SHA256}\"|; }" Formula/cunzhi.rb
+
+      - name: Verify Formula changes
+        run: |
+          cd homebrew-tap
+
+          echo "=== Formula changes ==="
+          git diff Formula/cunzhi.rb || true
+
+          echo "=== Updated Formula content ==="
+          cat Formula/cunzhi.rb
+
+      - name: Commit and push to homebrew-cunzhi repository
+        run: |
+          TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
+          VERSION_NUMBER="${{ steps.release_info.outputs.version_number }}"
+          cd homebrew-tap
+
+          # 检查是否有更改
+          if git diff --quiet Formula/cunzhi.rb; then
+            echo "No changes to Formula, skipping commit"
+            exit 0
+          fi
+
+          # 提交并推送更改
+          git add Formula/cunzhi.rb
+          git commit -m "chore: update formula to ${TAG_NAME}
+
+          - Update version to ${VERSION_NUMBER}
+          - Update download URLs and SHA256 checksums
+          - Auto-generated by update-homebrew workflow"
+
+          git push origin main
+          echo "✅ Successfully updated homebrew-cunzhi repository"
+
+      - name: Test Formula (optional)
+        run: |
+          echo "🧪 Formula update completed successfully!"
+          echo "You can test the formula with:"
+          echo "  brew tap imhuso/cunzhi"
+          echo "  brew install cunzhi"
