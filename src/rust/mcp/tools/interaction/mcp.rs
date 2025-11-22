@@ -24,6 +24,7 @@ impl InteractionTool {
                 Some(request.predefined_options)
             },
             is_markdown: request.is_markdown,
+            project_root_path: request.project_root_path,
         };
 
         match create_tauri_popup(&popup_request) {

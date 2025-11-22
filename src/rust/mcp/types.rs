@@ -11,6 +11,9 @@ pub struct ZhiRequest {
     #[schemars(description = "消息是否为Markdown格式，默认为true")]
     #[serde(default = "default_is_markdown")]
     pub is_markdown: bool,
+    #[schemars(description = "项目根路径（可选，用于索引状态可视化）")]
+    #[serde(default)]
+    pub project_root_path: Option<String>,
 }
 
 fn default_is_markdown() -> bool {
@@ -51,6 +54,7 @@ pub struct PopupRequest {
     pub message: String,
     pub predefined_options: Option<Vec<String>>,
     pub is_markdown: bool,
+    pub project_root_path: Option<String>,
 }
 
 /// 新的结构化响应数据格式

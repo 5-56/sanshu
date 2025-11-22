@@ -26,6 +26,10 @@ pub struct AcemcpConfig {
     pub text_extensions: Option<Vec<String>>,
     /// 要排除的模式列表
     pub exclude_patterns: Option<Vec<String>>,
+    /// 搜索时的智能等待配置（秒）
+    /// 当检测到索引正在进行时，随机等待 [min, max] 秒后再执行搜索
+    /// 默认值：Some((1, 5))，设为 None 则禁用智能等待
+    pub smart_wait_range: Option<(u64, u64)>,
 }
 
 /// 索引状态枚举

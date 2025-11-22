@@ -8,6 +8,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import PopupActions from './PopupActions.vue'
 import PopupContent from './PopupContent.vue'
 import PopupInput from './PopupInput.vue'
+import { useAcemcpSync } from '../../composables/useAcemcpSync'
 
 interface AppConfig {
   theme: string
@@ -57,6 +58,17 @@ const emit = defineEmits<Emits>()
 
 // 使用消息提示
 const message = useMessage()
+
+// 索引状态管理
+const {
+  currentProjectStatus,
+  statusSummary,
+  statusIcon,
+  isIndexing,
+  startPolling,
+  stopPolling,
+  setCurrentProject,
+} = useAcemcpSync()
 
 // 响应式状态
 const loading = ref(false)
@@ -118,6 +130,16 @@ watch(() => props.request, (newRequest) => {
     loading.value = true
     // 每次显示弹窗时重新加载配置
     loadReplyConfig()
+
+    // 如果有项目路径，启动索引状态轮询
+    if (newRequest.project_root_path) {
+      setCurrentProject(newRequest.project_root_path)
+      startPolling(newRequest.project_root_path, 3000) // 3秒轮询间隔
+    } else {
+      // 没有项目路径时停止轮询
+      stopPolling()
+    }
+
     setTimeout(() => {
       loading.value = false
     }, 300)
@@ -204,6 +226,8 @@ onUnmounted(() => {
   if (telegramUnlisten) {
     telegramUnlisten()
   }
+  // 组件卸载时停止索引状态轮询
+  stopPolling()
 })
 
 // 重置表单
@@ -389,6 +413,28 @@ Here is my original instruction:
 
 <template>
   <div v-if="isVisible" class="flex flex-col flex-1">
+    <!-- 索引状态条（仅在有项目路径时显示） -->
+    <div
+      v-if="request?.project_root_path && currentProjectStatus"
+      class="mx-2 mt-2 px-3 py-2 bg-black-100 rounded-lg border border-gray-700/50"
+    >
+      <div class="flex items-center gap-2 text-xs">
+        <div :class="statusIcon" class="w-4 h-4" />
+        <span class="text-white/80">索引状态：</span>
+        <span class="text-white font-medium">{{ statusSummary }}</span>
+        <div v-if="isIndexing" class="flex-1 ml-2">
+          <n-progress
+            type="line"
+            :percentage="currentProjectStatus.progress"
+            :height="4"
+            :border-radius="2"
+            :show-indicator="false"
+            status="info"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- 内容区域 - 可滚动 -->
     <div class="flex-1 overflow-y-auto scrollbar-thin">
       <!-- 消息内容 - 允许选中 -->

@@ -54,11 +54,58 @@ impl AcemcpTool {
             }
         }
 
-        // 执行：仅搜索（不触发索引）
-        match search_only(&acemcp_config, &request.project_root_path, &request.query).await {
-            Ok(text) => Ok(CallToolResult { content: vec![Content::text(text)], is_error: None }),
-            Err(e) => Ok(CallToolResult { content: vec![Content::text(format!("Acemcp搜索失败: {}", e))], is_error: Some(true) })
+        // 1. 检查初始索引状态
+        let initial_state = get_initial_index_state(&request.project_root_path);
+        log_debug!("项目索引状态: {:?}", initial_state);
+
+        // 2. 根据状态执行相应操作
+        let mut hint_message = String::new();
+        match initial_state {
+            InitialIndexState::Missing | InitialIndexState::Idle | InitialIndexState::Failed => {
+                // 启动后台索引
+                if let Err(e) = ensure_initial_index_background(&acemcp_config, &request.project_root_path).await {
+                    log_debug!("启动后台索引失败（不影响搜索）: {}", e);
+                } else {
+                    hint_message = "\n\n💡 提示：当前项目索引尚未完全初始化，已在后台启动索引，稍后搜索结果会更完整。".to_string();
+                }
+            }
+            InitialIndexState::Indexing => {
+                // 正在索引中，应用智能等待
+                if let Some((min_wait, max_wait)) = acemcp_config.smart_wait_range {
+                    use rand::Rng;
+                    let wait_secs = rand::thread_rng().gen_range(min_wait..=max_wait);
+
+                    log_important!(info, "检测到索引正在进行中，智能等待 {} 秒后执行搜索", wait_secs);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
+
+                    hint_message = format!("\n\n💡 提示：检测到索引正在进行中，已等待 {} 秒以获取更完整的搜索结果。", wait_secs);
+                }
+            }
+            InitialIndexState::Synced => {
+                // 已完成索引，直接搜索
+                log_debug!("项目索引已完成，直接执行搜索");
+            }
         }
+
+        // 3. 执行搜索（不触发索引）
+        let search_result = match search_only(&acemcp_config, &request.project_root_path, &request.query).await {
+            Ok(text) => text,
+            Err(e) => {
+                return Ok(CallToolResult {
+                    content: vec![Content::text(format!("Acemcp搜索失败: {}", e))],
+                    is_error: Some(true)
+                });
+            }
+        };
+
+        // 4. 附加提示信息
+        let final_result = if hint_message.is_empty() {
+            search_result
+        } else {
+            format!("{}{}", search_result, hint_message)
+        };
+
+        Ok(CallToolResult { content: vec![Content::text(final_result)], is_error: None })
     }
 
     /// 执行索引更新（向后兼容的索引+搜索一体化接口）
@@ -131,6 +178,8 @@ impl AcemcpTool {
             max_lines_per_blob: config.mcp_config.acemcp_max_lines_per_blob,
             text_extensions: config.mcp_config.acemcp_text_extensions,
             exclude_patterns: config.mcp_config.acemcp_exclude_patterns,
+            // 智能等待默认值：1-5 秒随机等待
+            smart_wait_range: Some((1, 5)),
         })
     }
 
@@ -165,6 +214,65 @@ impl AcemcpTool {
 }
 
 // ---------------- 已移除 Python Web 服务依赖，完全使用 Rust 实现 ----------------
+
+// ---------------- 索引初始化状态枚举 ----------------
+
+/// 索引初始化状态
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialIndexState {
+    /// 项目记录不存在
+    Missing,
+    /// 从未索引过（状态为 Idle 且 total_files == 0）
+    Idle,
+    /// 已完成索引
+    Synced,
+    /// 正在索引中
+    Indexing,
+    /// 上次索引失败
+    Failed,
+}
+
+/// 获取项目的初始索引状态
+pub fn get_initial_index_state(project_root: &str) -> InitialIndexState {
+    let status = get_project_status(project_root);
+
+    match status.status {
+        IndexStatus::Idle if status.total_files == 0 => InitialIndexState::Idle,
+        IndexStatus::Idle => InitialIndexState::Missing,
+        IndexStatus::Synced => InitialIndexState::Synced,
+        IndexStatus::Indexing => InitialIndexState::Indexing,
+        IndexStatus::Failed => InitialIndexState::Failed,
+    }
+}
+
+/// 确保后台索引已启动（非阻塞）
+/// 仅在项目未初始化或索引失败时启动后台索引任务
+pub async fn ensure_initial_index_background(config: &AcemcpConfig, project_root: &str) -> anyhow::Result<()> {
+    let state = get_initial_index_state(project_root);
+
+    match state {
+        InitialIndexState::Missing | InitialIndexState::Idle | InitialIndexState::Failed => {
+            // 在后台启动索引任务
+            let config_clone = config.clone();
+            let project_root_clone = project_root.to_string();
+
+            tokio::spawn(async move {
+                log_important!(info, "后台索引任务启动: project_root={}", project_root_clone);
+                if let Err(e) = update_index(&config_clone, &project_root_clone).await {
+                    log_important!(info, "后台索引失败: project_root={}, error={}", project_root_clone, e);
+                } else {
+                    log_important!(info, "后台索引成功: project_root={}", project_root_clone);
+                }
+            });
+
+            Ok(())
+        }
+        InitialIndexState::Synced | InitialIndexState::Indexing => {
+            // 已经完成或正在进行，无需操作
+            Ok(())
+        }
+    }
+}
 
 // ---------------- 整合 temp 逻辑：索引、上传、检索 ----------------
 
