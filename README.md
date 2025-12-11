@@ -703,12 +703,13 @@ brew install sanshu
 ```json
 {
   "mcpServers": {
-    "三术": {
-      "command": "sanshu"
+    "sanshu": {
+      "command": "三术"
     }
   }
 }
 ```
+PS：某些插件或者CLI工具可能无法正确识别`三术`中文，请自行用拼音`sanshu`作为命名，否则可能会导致无法正确识别。
 
 ### 📝 在 AI 编辑器中启用提示词（可选）
 
@@ -821,6 +822,6 @@ copies or substantial portions of the Software.
 
 **如果这个项目对你有帮助，请给我们一个 ⭐ Star！**
 
-Made with ❤️ by the sanshu team
+Made with ❤️ by the 煎饼果子(86) 
 
 </div>
