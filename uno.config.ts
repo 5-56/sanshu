@@ -209,5 +209,11 @@ export default defineConfig({
     'i-carbon-settings-adjust',
     'i-carbon-trash-can',
     'i-carbon-document-text',
+    // 网络状态相关图标
+    'i-carbon-network-3',
+    'i-carbon-location',
+    'i-carbon-direct-link',
+    'i-carbon-ip',
+    'i-carbon-chevron-down',
   ],
 })

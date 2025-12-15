@@ -8,6 +8,26 @@ interface VersionInfo {
   hasUpdate: boolean
   releaseUrl: string
   releaseNotes: string
+  // 网络状态信息（新增）
+  networkStatus?: NetworkStatus
+}
+
+// 网络状态信息接口
+export interface NetworkStatus {
+  // 当前 IP 的国家代码（如 "CN", "US"）
+  country: string
+  // 当前 IP 的城市（可选）
+  city?: string
+  // 当前 IP 地址
+  ip?: string
+  // 是否使用了代理
+  using_proxy: boolean
+  // 代理信息（如果使用了代理）
+  proxy_host?: string
+  proxy_port?: number
+  proxy_type?: string
+  // GitHub API 是否可达
+  github_reachable: boolean
 }
 
 interface UpdateInfo {
@@ -16,6 +36,8 @@ interface UpdateInfo {
   latest_version: string
   release_notes: string
   download_url: string
+  // 网络状态信息（新增）
+  network_status: NetworkStatus
 }
 
 interface UpdateProgress {
@@ -58,6 +80,9 @@ function saveCancelledVersions(versions: Set<string>) {
 const versionInfo = ref<VersionInfo | null>(null)
 const isChecking = ref(false)
 const lastCheckTime = ref<Date | null>(null)
+
+// 网络状态（新增）
+const networkStatus = ref<NetworkStatus | null>(null)
 
 // 更新相关状态
 const isUpdating = ref(false)
@@ -250,6 +275,13 @@ async function checkForUpdatesWithTauri(): Promise<UpdateInfo | null> {
   try {
     const updateInfo = await invoke('check_for_updates') as UpdateInfo
     console.log('✅ Tauri 更新检查成功:', updateInfo)
+
+    // 保存网络状态信息（新增）
+    if (updateInfo.network_status) {
+      networkStatus.value = updateInfo.network_status
+      console.log('🌐 网络状态:', updateInfo.network_status)
+    }
+
     return updateInfo
   }
   catch (error) {
@@ -259,12 +291,20 @@ async function checkForUpdatesWithTauri(): Promise<UpdateInfo | null> {
     const githubInfo = await checkLatestVersion()
 
     if (githubInfo?.hasUpdate) {
+      // 创建默认的网络状态（fallback 模式）
+      const defaultNetworkStatus: NetworkStatus = {
+        country: 'UNKNOWN',
+        using_proxy: false,
+        github_reachable: true, // 如果能获取到 GitHub 信息，说明可达
+      }
+
       return {
         available: true,
         current_version: githubInfo.current,
         latest_version: githubInfo.latest,
         release_notes: githubInfo.releaseNotes,
         download_url: githubInfo.releaseUrl,
+        network_status: defaultNetworkStatus,
       }
     }
 
@@ -390,6 +430,7 @@ export function useVersionCheck() {
     updateStatus,
     showUpdateModal,
     autoCheckEnabled,
+    networkStatus, // 新增：网络状态
     checkLatestVersion,
     autoCheckUpdate,
     silentCheckUpdate,

@@ -3,6 +3,42 @@ use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf, process::Command};
 use crate::config::AppState;
 use crate::network::{detect_geo_location, ProxyDetector, ProxyInfo, create_update_client, create_download_client};
+use crate::network::geo::GeoLocation;
+
+/// 网络状态信息
+/// 用于向前端展示当前的网络环境和代理状态
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkStatus {
+    /// 当前 IP 的国家代码（如 "CN", "US"）
+    pub country: String,
+    /// 当前 IP 的城市（可选）
+    pub city: Option<String>,
+    /// 当前 IP 地址
+    pub ip: Option<String>,
+    /// 是否使用了代理
+    pub using_proxy: bool,
+    /// 代理信息（如果使用了代理）
+    pub proxy_host: Option<String>,
+    pub proxy_port: Option<u16>,
+    pub proxy_type: Option<String>,
+    /// GitHub API 是否可达
+    pub github_reachable: bool,
+}
+
+impl Default for NetworkStatus {
+    fn default() -> Self {
+        Self {
+            country: "UNKNOWN".to_string(),
+            city: None,
+            ip: None,
+            using_proxy: false,
+            proxy_host: None,
+            proxy_port: None,
+            proxy_type: None,
+            github_reachable: false,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateInfo {
@@ -11,6 +47,8 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub release_notes: String,
     pub download_url: String,
+    /// 网络状态信息（新增）
+    pub network_status: NetworkStatus,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -26,8 +64,25 @@ pub struct UpdateProgress {
 pub async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateInfo, String> {
     log::info!("🔍 开始检查更新");
 
-    // 智能代理检测和配置
+    // 第一步：检测地理位置（用于网络状态展示）
+    let geo_info = detect_geo_location_full().await;
+    log::info!("🌍 地理位置检测完成: country={}, city={:?}",
+        geo_info.country, geo_info.city);
+
+    // 第二步：智能代理检测和配置
     let proxy_info = detect_and_configure_proxy(&state).await;
+
+    // 构建网络状态信息
+    let mut network_status = NetworkStatus {
+        country: geo_info.country.clone(),
+        city: geo_info.city.clone(),
+        ip: Some(geo_info.ip.clone()),
+        using_proxy: proxy_info.is_some(),
+        proxy_host: proxy_info.as_ref().map(|p| p.host.clone()),
+        proxy_port: proxy_info.as_ref().map(|p| p.port),
+        proxy_type: proxy_info.as_ref().map(|p| p.proxy_type.to_string()),
+        github_reachable: false, // 稍后更新
+    };
 
     // 创建HTTP客户端（带或不带代理）
     let client = create_update_client(proxy_info.as_ref())
@@ -50,6 +105,9 @@ pub async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> Re
         })?;
 
     log::info!("📊 GitHub API 响应状态: {}", response.status());
+
+    // 更新 GitHub 可达状态
+    network_status.github_reachable = response.status().is_success();
 
     if !response.status().is_success() {
         let status = response.status();
@@ -76,15 +134,15 @@ pub async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> Re
 
     let current_version = app.package_info().version.to_string();
     log::info!("📦 当前版本: {}", current_version);
-    
+
     // 提取最新版本号，处理中文tag
     let tag_name = release["tag_name"]
         .as_str()
         .unwrap_or("")
         .to_string();
-    
+
     log::info!("🏷️ GitHub tag: {}", tag_name);
-    
+
     // 移除前缀v和中文字符，只保留数字和点
     let latest_version = tag_name
         .replace("v", "")
@@ -113,6 +171,7 @@ pub async fn check_for_updates(app: AppHandle, state: State<'_, AppState>) -> Re
         latest_version,
         release_notes: release["body"].as_str().unwrap_or("").to_string(),
         download_url,
+        network_status,
     };
 
     log::info!("✅ 更新检查完成: {:?}", update_info);
@@ -910,4 +969,93 @@ async fn detect_and_configure_proxy(state: &State<'_, AppState>) -> Option<Proxy
 
     log::info!("ℹ️ 未启用代理，使用直连");
     None
+}
+
+/// 检测完整的地理位置信息
+///
+/// 与 `detect_geo_location` 不同，此函数返回完整的 GeoLocation 结构体
+/// 包含 IP、城市、国家等详细信息
+async fn detect_geo_location_full() -> GeoLocation {
+    log::info!("🌍 开始检测完整地理位置信息");
+
+    // 创建HTTP客户端，设置较短的超时时间
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("⚠️ 创建HTTP客户端失败: {}", e);
+            return GeoLocation {
+                ip: "unknown".to_string(),
+                city: None,
+                region: None,
+                country: "UNKNOWN".to_string(),
+                loc: None,
+                org: None,
+                postal: None,
+                timezone: None,
+            };
+        }
+    };
+
+    // 请求 ipinfo.io API
+    match client
+        .get("https://ipinfo.io/json")
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if !response.status().is_success() {
+                log::warn!("⚠️ IP地理位置检测请求失败: HTTP {}", response.status());
+                return GeoLocation {
+                    ip: "unknown".to_string(),
+                    city: None,
+                    region: None,
+                    country: "UNKNOWN".to_string(),
+                    loc: None,
+                    org: None,
+                    postal: None,
+                    timezone: None,
+                };
+            }
+
+            // 解析JSON响应
+            match response.json::<GeoLocation>().await {
+                Ok(geo) => {
+                    log::info!("✅ 检测到地理位置: {} ({}) - IP: {}",
+                        geo.country,
+                        geo.city.as_deref().unwrap_or("未知城市"),
+                        geo.ip);
+                    geo
+                }
+                Err(e) => {
+                    log::warn!("⚠️ 解析地理位置信息失败: {}", e);
+                    GeoLocation {
+                        ip: "unknown".to_string(),
+                        city: None,
+                        region: None,
+                        country: "UNKNOWN".to_string(),
+                        loc: None,
+                        org: None,
+                        postal: None,
+                        timezone: None,
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("⚠️ IP地理位置检测网络请求失败: {}", e);
+            GeoLocation {
+                ip: "unknown".to_string(),
+                city: None,
+                region: None,
+                country: "UNKNOWN".to_string(),
+                loc: None,
+                org: None,
+                postal: None,
+                timezone: None,
+            }
+        }
+    }
 }

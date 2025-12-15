@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMessage } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 
 interface Props {
@@ -24,10 +24,43 @@ const {
   isUpdating,
   updateStatus,
   updateProgress,
+  networkStatus,
   performOneClickUpdate,
   restartApp,
   dismissUpdate,
 } = useVersionCheck()
+
+// 网络状态面板展开状态
+const showNetworkDetails = ref(false)
+
+// 获取国家名称（简单映射）
+function getCountryName(code: string): string {
+  const countryMap: Record<string, string> = {
+    CN: '中国',
+    US: '美国',
+    JP: '日本',
+    KR: '韩国',
+    HK: '香港',
+    TW: '台湾',
+    SG: '新加坡',
+    DE: '德国',
+    GB: '英国',
+    FR: '法国',
+    UNKNOWN: '未知',
+  }
+  return countryMap[code] || code
+}
+
+// 获取连接方式描述
+const connectionDescription = computed(() => {
+  if (!networkStatus.value)
+    return '检测中...'
+  if (networkStatus.value.using_proxy) {
+    const proxyType = networkStatus.value.proxy_type?.toUpperCase() || 'HTTP'
+    return `代理 (${proxyType} ${networkStatus.value.proxy_host}:${networkStatus.value.proxy_port})`
+  }
+  return '直连'
+})
 
 // 简单的文本格式化（将换行转换为HTML）
 const formattedReleaseNotes = computed(() => {
@@ -153,6 +186,87 @@ async function handleRestart() {
               v{{ versionInfo.latest }}
             </n-tag>
           </div>
+        </div>
+
+        <!-- 网络状态（可折叠） -->
+        <div class="rounded-lg border border-surface-200 dark:border-surface-700 overflow-hidden">
+          <!-- 折叠头部 -->
+          <div
+            class="flex items-center justify-between p-3 bg-surface-50 dark:bg-surface-900 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+            @click="showNetworkDetails = !showNetworkDetails"
+          >
+            <div class="flex items-center gap-2">
+              <div class="i-carbon-network-3 text-green-500" />
+              <span class="text-sm font-medium text-on-surface">网络状态</span>
+              <!-- 简要状态指示 -->
+              <n-tag
+                v-if="networkStatus"
+                size="tiny"
+                :type="networkStatus.github_reachable ? 'success' : 'warning'"
+              >
+                {{ networkStatus.github_reachable ? '正常' : '受限' }}
+              </n-tag>
+            </div>
+            <div
+              class="i-carbon-chevron-down text-on-surface-secondary transition-transform duration-200"
+              :class="{ 'rotate-180': showNetworkDetails }"
+            />
+          </div>
+
+          <!-- 折叠内容 -->
+          <n-collapse-transition :show="showNetworkDetails">
+            <div class="p-3 bg-surface-100 dark:bg-surface-800 space-y-2 border-t border-surface-200 dark:border-surface-700">
+              <!-- 当前位置 -->
+              <div class="flex items-center justify-between text-sm">
+                <div class="flex items-center gap-2 text-on-surface-secondary">
+                  <div class="i-carbon-location text-blue-400" />
+                  <span>当前位置</span>
+                </div>
+                <span class="text-on-surface font-medium">
+                  {{ networkStatus ? `${getCountryName(networkStatus.country)} (${networkStatus.country})` : '检测中...' }}
+                </span>
+              </div>
+
+              <!-- 连接方式 -->
+              <div class="flex items-center justify-between text-sm">
+                <div class="flex items-center gap-2 text-on-surface-secondary">
+                  <div
+                    class="text-purple-400"
+                    :class="networkStatus?.using_proxy ? 'i-carbon-connection-signal' : 'i-carbon-direct-link'"
+                  />
+                  <span>连接方式</span>
+                </div>
+                <span class="text-on-surface font-medium">
+                  {{ connectionDescription }}
+                </span>
+              </div>
+
+              <!-- GitHub 连接状态 -->
+              <div class="flex items-center justify-between text-sm">
+                <div class="flex items-center gap-2 text-on-surface-secondary">
+                  <div class="i-carbon-logo-github text-gray-400" />
+                  <span>GitHub 连接</span>
+                </div>
+                <n-tag
+                  size="tiny"
+                  :type="networkStatus?.github_reachable ? 'success' : 'error'"
+                >
+                  {{ networkStatus?.github_reachable ? '正常' : '不可达' }}
+                </n-tag>
+              </div>
+
+              <!-- IP 地址（如果有） -->
+              <div v-if="networkStatus?.ip && networkStatus.ip !== 'unknown'" class="flex items-center justify-between text-sm">
+                <div class="flex items-center gap-2 text-on-surface-secondary">
+                  <div class="i-carbon-ip text-cyan-400" />
+                  <span>出口 IP</span>
+                </div>
+                <span class="text-on-surface font-mono text-xs">
+                  {{ networkStatus.ip }}
+                </span>
+              </div>
+            </div>
+          </n-collapse-transition>
         </div>
 
         <!-- 更新进度 -->
