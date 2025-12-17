@@ -27,11 +27,18 @@ pub async fn save_acemcp_config(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    // 规范化 base_url：补充协议（如缺失）并去除末尾斜杠，防止URL拼接时出现双斜杠
     let mut base_url = args.base_url.trim().to_string();
     if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
         base_url = format!("http://{}", base_url);
         log::warn!("BASE_URL 缺少协议，已自动补全为: {}", base_url);
     }
+    // 去除末尾的所有斜杠，确保URL格式统一
+    while base_url.ends_with('/') {
+        base_url.pop();
+    }
+    log::info!("规范化后的 BASE_URL: {}", base_url);
+
     {
         let mut config = state
             .config
@@ -191,29 +198,38 @@ pub async fn test_acemcp_connection(
 /// 读取日志文件内容
 #[tauri::command]
 pub async fn read_acemcp_logs(_state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let home = std::env::var("HOME").map_err(|_| "无法获取HOME目录".to_string())?;
-    let log_path = format!("{}/.sanshu/log/acemcp.log", home);
-    
+    // 使用 dirs::config_dir() 获取系统配置目录，确保跨平台兼容性
+    // Windows: C:\Users\<用户>\AppData\Roaming\sanshu\log\acemcp.log
+    // Linux: ~/.config/sanshu/log/acemcp.log
+    // macOS: ~/Library/Application Support/sanshu/log/acemcp.log
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| "无法获取系统配置目录，请检查操作系统环境".to_string())?;
+
+    let log_path = config_dir.join("sanshu").join("log").join("acemcp.log");
+
     // 确保日志目录存在
-    let log_dir = std::path::Path::new(&log_path).parent().unwrap();
-    if !log_dir.exists() {
-        std::fs::create_dir_all(log_dir)
-            .map_err(|e| format!("创建日志目录失败: {}", e))?;
+    if let Some(log_dir) = log_path.parent() {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(log_dir)
+                .map_err(|e| format!("创建日志目录失败: {} (路径: {})", e, log_dir.display()))?;
+        }
     }
-    
-    if !std::path::Path::new(&log_path).exists() {
+
+    // 如果日志文件不存在，返回空数组
+    if !log_path.exists() {
         return Ok(vec![]);
     }
-    
+
+    // 读取日志文件内容
     let content = std::fs::read_to_string(&log_path)
-        .map_err(|e| format!("读取日志文件失败: {}", e))?;
-    
+        .map_err(|e| format!("读取日志文件失败: {} (路径: {})", e, log_path.display()))?;
+
     // 返回最近1000行日志
     let all_lines: Vec<String> = content
         .lines()
         .map(|s| s.to_string())
         .collect();
-    
+
     // 只返回最后1000行
     let lines: Vec<String> = if all_lines.len() > 1000 {
         let skip_count = all_lines.len() - 1000;
@@ -221,19 +237,30 @@ pub async fn read_acemcp_logs(_state: State<'_, AppState>) -> Result<Vec<String>
     } else {
         all_lines
     };
-    
+
     Ok(lines)
 }
 
 #[tauri::command]
 pub async fn clear_acemcp_cache(_state: State<'_, AppState>) -> Result<String, String> {
-    let cache_dir = std::env::var("HOME").unwrap_or_default() + "/.acemcp/data";
-    if std::path::Path::new(&cache_dir).exists() {
-        std::fs::remove_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    // 使用 dirs::home_dir() 获取用户主目录，确保跨平台兼容性
+    // 如果获取失败，降级到当前目录（与项目中 home_projects_file() 保持一致）
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let cache_dir = home.join(".acemcp").join("data");
+
+    // 如果缓存目录存在，先删除
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)
+            .map_err(|e| format!("删除缓存目录失败: {} (路径: {})", e, cache_dir.display()))?;
     }
-    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
-    log::info!("acemcp缓存已清除: {}", cache_dir);
-    Ok(cache_dir)
+
+    // 重新创建缓存目录
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("创建缓存目录失败: {} (路径: {})", e, cache_dir.display()))?;
+
+    let cache_path = cache_dir.to_string_lossy().to_string();
+    log::info!("acemcp缓存已清除: {}", cache_path);
+    Ok(cache_path)
 }
 
 #[derive(Debug, serde::Serialize)]

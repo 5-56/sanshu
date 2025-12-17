@@ -939,7 +939,11 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
             batch_size,
             new_blobs.len()
         );
-        
+
+        log_important!(info,
+            "=== 批量上传代码索引 ==="
+        );
+
         for i in 0..total_batches {
             let start = i * batch_size;
             let end = usize::min(start + batch_size, new_blobs.len());
