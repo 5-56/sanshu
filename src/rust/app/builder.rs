@@ -91,6 +91,11 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             crate::mcp::tools::acemcp::commands::stop_project_watching,
             crate::mcp::tools::acemcp::commands::stop_all_watching,
 
+            // context7命令（迁移至 tools::context7::commands）
+            crate::mcp::tools::context7::commands::test_context7_connection,
+            crate::mcp::tools::context7::commands::get_context7_config,
+            crate::mcp::tools::context7::commands::save_context7_config,
+
             // 自定义prompt命令
             get_custom_prompt_config,
             add_custom_prompt,

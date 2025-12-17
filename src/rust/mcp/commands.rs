@@ -65,7 +65,20 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         dark_icon_bg: "dark:bg-green-800".to_string(),
         has_config: true, // 代码搜索工具有配置选项
     });
-    
+
+    // Context7 文档查询工具 - 始终存在，有配置选项
+    tools.push(MCPToolConfig {
+        id: mcp::TOOL_CONTEXT7.to_string(),
+        name: "Context7 文档查询".to_string(),
+        description: "查询最新的框架和库文档，支持 Next.js、React、Vue、Spring 等主流框架".to_string(),
+        enabled: config.mcp_config.tools.get(mcp::TOOL_CONTEXT7).copied().unwrap_or(true),
+        can_disable: true,
+        icon: "i-carbon-document text-lg text-orange-600 dark:text-orange-400".to_string(),
+        icon_bg: "bg-orange-100 dark:bg-orange-900".to_string(),
+        dark_icon_bg: "dark:bg-orange-800".to_string(),
+        has_config: true, // Context7 工具有配置选项
+    });
+
     // 按启用状态排序，启用的在前
     tools.sort_by(|a, b| b.enabled.cmp(&a.enabled));
     

@@ -44,6 +44,15 @@ const acemcpConfig = ref({
   exclude_patterns: ['.venv', 'venv', '.env', 'env', 'node_modules', '.next', '.nuxt', '.output', 'out', '.cache', '.turbo', '.vercel', '.netlify', '.swc', '.vite', '.parcel-cache', '.sass-cache', '.eslintcache', '.stylelintcache', 'coverage', '.nyc_output', 'tmp', 'temp', '.tmp', '.temp', '.git', '.svn', '.hg', '__pycache__', '.pytest_cache', '.mypy_cache', '.tox', '.eggs', '*.egg-info', 'dist', 'build', '.idea', '.vscode', '.DS_Store', '*.pyc', '*.pyo', '*.pyd', '.Python', 'pip-log.txt', 'pip-delete-this-directory.txt', '.coverage', 'htmlcov', '.gradle', 'target', 'bin', 'obj'],
 })
 
+// Context7 配置
+const context7Config = ref({
+  api_key: '',
+})
+
+// Context7 测试状态
+const context7TestLoading = ref(false)
+const context7TestResult = ref<{ success: boolean, message: string, preview?: string } | null>(null)
+
 // 建议项（用于多选 + 标签）
 const extOptions = ref([
   '.py',
@@ -257,6 +266,10 @@ async function openToolConfig(toolId: string) {
   if (toolId === 'sou') {
     await loadAcemcpConfig()
   }
+  // 如果是 Context7 工具，加载当前配置
+  else if (toolId === 'context7') {
+    await loadContext7Config()
+  }
 
   showToolConfigModal.value = true
 }
@@ -336,10 +349,84 @@ async function saveAcemcpConfig() {
   }
 }
 
+// 加载 Context7 配置
+async function loadContext7Config() {
+  try {
+    const config = await invoke('get_context7_config') as {
+      api_key?: string
+    }
+
+    context7Config.value = {
+      api_key: config.api_key || '',
+    }
+
+    // 清空之前的测试结果
+    context7TestResult.value = null
+  }
+  catch (err) {
+    if (message) {
+      message.error(`加载 Context7 配置失败: ${err}`)
+    }
+  }
+}
+
+// 保存 Context7 配置
+async function saveContext7Config() {
+  try {
+    // 调用后端保存配置 (需要添加对应的 Tauri 命令)
+    await invoke('save_context7_config', {
+      apiKey: context7Config.value.api_key,
+    })
+
+    message.success('Context7 配置已保存')
+  }
+  catch (err) {
+    if (message) {
+      message.error(`保存 Context7 配置失败: ${err}`)
+    }
+  }
+}
+
+// 测试 Context7 连接
+async function testContext7Connection() {
+  try {
+    context7TestLoading.value = true
+    context7TestResult.value = null
+
+    const result = await invoke('test_context7_connection') as {
+      success: boolean
+      message: string
+      preview?: string
+    }
+
+    context7TestResult.value = result
+
+    if (result.success) {
+      message.success(result.message, { duration: 3000 })
+    }
+    else {
+      message.error(result.message, { duration: 5000 })
+    }
+  }
+  catch (err) {
+    context7TestResult.value = {
+      success: false,
+      message: `测试失败: ${err}`,
+    }
+    message.error(`测试失败: ${err}`)
+  }
+  finally {
+    context7TestLoading.value = false
+  }
+}
+
 // 保存当前工具配置
 async function saveCurrentToolConfig() {
   if (currentToolId.value === 'sou') {
     await saveAcemcpConfig()
+  }
+  else if (currentToolId.value === 'context7') {
+    await saveContext7Config()
   }
   // 未来可以添加其他工具的保存逻辑
 }
@@ -981,6 +1068,83 @@ watch(() => acemcpConfig.value.text_extensions, (list) => {
         </n-tabs>
       </div>
 
+      <!-- Context7 文档查询工具配置 -->
+      <div v-else-if="currentToolId === 'context7'">
+        <n-space vertical size="large">
+          <n-alert type="info" title="关于 Context7">
+            <template #icon>
+              <div class="i-carbon-information" />
+            </template>
+            <p class="text-sm">
+              Context7 提供最新的框架和库文档查询服务。免费使用无需配置 API Key，配置后可获得更高的速率限制。
+            </p>
+          </n-alert>
+
+          <n-form-item label="API Key (可选)">
+            <n-input
+              v-model:value="context7Config.api_key"
+              type="password"
+              show-password-on="click"
+              placeholder="留空使用免费模式，或输入 API Key 获得更高速率限制"
+              clearable
+            />
+            <template #feedback>
+              <div class="text-sm opacity-60">
+                免费模式有速率限制。获取 API Key:
+                <a
+                  href="https://context7.com/dashboard"
+                  target="_blank"
+                  class="text-blue-500 hover:underline"
+                >
+                  context7.com/dashboard
+                </a>
+              </div>
+            </template>
+          </n-form-item>
+
+          <n-divider />
+
+          <n-space vertical size="medium">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium">连接测试</span>
+              <n-button
+                type="primary"
+                :loading="context7TestLoading"
+                @click="testContext7Connection"
+              >
+                <template #icon>
+                  <div class="i-carbon-play" />
+                </template>
+                测试连接
+              </n-button>
+            </div>
+
+            <n-alert
+              v-if="context7TestResult"
+              :type="context7TestResult.success ? 'success' : 'error'"
+              :title="context7TestResult.success ? '测试成功' : '测试失败'"
+            >
+              <template #icon>
+                <div :class="context7TestResult.success ? 'i-carbon-checkmark-filled' : 'i-carbon-warning-filled'" />
+              </template>
+              <p class="text-sm">{{ context7TestResult.message }}</p>
+              <div v-if="context7TestResult.preview" class="mt-2 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono">
+                {{ context7TestResult.preview }}
+              </div>
+            </n-alert>
+
+            <n-alert type="info" title="测试说明">
+              <template #icon>
+                <div class="i-carbon-information" />
+              </template>
+              <p class="text-sm">
+                测试将查询 Spring Framework 核心文档，验证 API 连接是否正常。
+              </p>
+            </n-alert>
+          </n-space>
+        </n-space>
+      </div>
+
       <!-- 其他工具的配置占位 -->
       <div v-else class="text-center py-8">
         <n-empty description="此工具暂无配置选项" />
@@ -991,7 +1155,7 @@ watch(() => acemcpConfig.value.text_extensions, (list) => {
           <n-button @click="showToolConfigModal = false">
             取消
           </n-button>
-          <n-button v-if="currentToolId === 'sou'" type="primary" @click="saveCurrentToolConfig">
+          <n-button v-if="currentToolId === 'sou' || currentToolId === 'context7'" type="primary" @click="saveCurrentToolConfig">
             保存配置
           </n-button>
         </n-space>

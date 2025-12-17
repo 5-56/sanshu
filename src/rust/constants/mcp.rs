@@ -9,8 +9,11 @@ pub const TOOL_JI: &str = "ji";
 /// 代码搜索工具标识符
 pub const TOOL_SOU: &str = "sou";
 
+/// Context7 文档查询工具标识符
+pub const TOOL_CONTEXT7: &str = "context7";
+
 /// 默认启用的工具列表
-pub const DEFAULT_ENABLED_TOOLS: &[&str] = &[TOOL_ZHI, TOOL_JI, TOOL_SOU];
+pub const DEFAULT_ENABLED_TOOLS: &[&str] = &[TOOL_ZHI, TOOL_JI, TOOL_SOU, TOOL_CONTEXT7];
 
 /// 继续回复默认启用状态
 pub const DEFAULT_CONTINUE_REPLY_ENABLED: bool = true;
@@ -63,6 +66,7 @@ impl Default for McpConfig {
                 McpToolConfig::new(TOOL_ZHI, true, false), // 三术工具不可禁用，默认启用
                 McpToolConfig::new(TOOL_JI, true, true),   // 记忆管理工具可禁用，默认启用（与 default_mcp_tools() 保持一致）
                 McpToolConfig::new(TOOL_SOU, false, true), // 代码搜索工具可禁用，默认关闭
+                McpToolConfig::new(TOOL_CONTEXT7, true, true), // Context7 文档查询工具可禁用，默认启用
             ],
             continue_reply_enabled: DEFAULT_CONTINUE_REPLY_ENABLED,
             auto_continue_threshold: DEFAULT_AUTO_CONTINUE_THRESHOLD,
@@ -124,5 +128,5 @@ pub fn get_default_mcp_config() -> McpConfig {
 
 /// 检查是否为有效的工具 ID
 pub fn is_valid_tool_id(tool_id: &str) -> bool {
-    matches!(tool_id, TOOL_ZHI | TOOL_JI | TOOL_SOU)
+    matches!(tool_id, TOOL_ZHI | TOOL_JI | TOOL_SOU | TOOL_CONTEXT7)
 }

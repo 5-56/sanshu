@@ -116,6 +116,7 @@ pub struct McpConfig {
     pub acemcp_max_lines_per_blob: Option<u32>, // acemcp最大行数/块
     pub acemcp_text_extensions: Option<Vec<String>>, // acemcp文件扩展名
     pub acemcp_exclude_patterns: Option<Vec<String>>, // acemcp排除模式
+    pub context7_api_key: Option<String>, // Context7 API密钥 (可选，免费使用时可为空)
 }
 
 // 自定义prompt结构
@@ -281,6 +282,7 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_max_lines_per_blob: None,
         acemcp_text_extensions: None,
         acemcp_exclude_patterns: None,
+        context7_api_key: None,
     }
 }
 
@@ -378,6 +380,7 @@ pub fn default_mcp_tools() -> HashMap<String, bool> {
     tools.insert(mcp::TOOL_ZHI.to_string(), true); // 三术工具默认启用（核心工具，不可禁用）
     tools.insert(mcp::TOOL_JI.to_string(), true); // 记忆管理工具默认启用（核心功能，不依赖外部配置，开箱即用）
     tools.insert(mcp::TOOL_SOU.to_string(), false); // 代码搜索工具默认关闭（依赖第三方 acemcp 服务，需要用户配置 token 和 URL）
+    tools.insert(mcp::TOOL_CONTEXT7.to_string(), true); // Context7 文档查询工具默认启用（支持免费使用，无需配置即可使用）
     tools
 }
 
