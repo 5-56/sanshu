@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::types::{Context7Request, Context7Config, Context7Response, SearchResponse, SearchResult};
+use super::types::{Context7Request, Context7Config, SearchResponse, SearchResult};
 use crate::log_debug;
 use crate::log_important;
 
@@ -161,13 +161,16 @@ impl Context7Tool {
             ));
         }
 
-        // 解析响应
+        // 读取响应文本 (Context7 API 返回纯文本 Markdown，不是 JSON)
         let response_text = response.text().await?;
-        let api_response: Context7Response = serde_json::from_str(&response_text)
-            .map_err(|e| anyhow::anyhow!("解析响应失败: {}", e))?;
 
-        // 格式化输出
-        Ok(Self::format_response(&api_response, request))
+        // 如果响应为空
+        if response_text.trim().is_empty() {
+            return Ok("未找到相关文档。请尝试调整查询参数。".to_string());
+        }
+
+        // 格式化输出（添加标题和元信息）
+        Ok(Self::format_text_response(&response_text, request))
     }
 
     /// 格式化错误消息
@@ -181,8 +184,8 @@ impl Context7Tool {
         }
     }
 
-    /// 格式化响应为 Markdown
-    fn format_response(response: &Context7Response, request: &Context7Request) -> String {
+    /// 格式化纯文本响应为 Markdown（添加标题和元信息）
+    fn format_text_response(content: &str, request: &Context7Request) -> String {
         let mut output = String::new();
 
         // 添加标题
@@ -194,38 +197,16 @@ impl Context7Tool {
         if let Some(version) = &request.version {
             output.push_str(&format!("**版本**: {}\n", version));
         }
+        if let Some(page) = request.page {
+            output.push_str(&format!("**页码**: {}\n", page));
+        }
         output.push_str("\n---\n\n");
 
-        // 添加文档片段
-        if response.snippets.is_empty() {
-            output.push_str("未找到相关文档。请尝试调整查询参数。\n");
-        } else {
-            for (idx, snippet) in response.snippets.iter().enumerate() {
-                if let Some(title) = &snippet.title {
-                    output.push_str(&format!("## {}\n\n", title));
-                } else {
-                    output.push_str(&format!("## 片段 {}\n\n", idx + 1));
-                }
-                output.push_str(&snippet.content);
-                output.push_str("\n\n");
-            }
-        }
-
-        // 添加分页信息
-        if let Some(pagination) = &response.pagination {
-            output.push_str("---\n\n");
-            output.push_str(&format!(
-                "📄 第 {}/{} 页",
-                pagination.current_page, pagination.total_pages
-            ));
-            if pagination.has_next {
-                output.push_str(&format!(" | 使用 `page: {}` 查看下一页", pagination.current_page + 1));
-            }
-            output.push_str("\n");
-        }
+        // 添加文档内容
+        output.push_str(content);
 
         // 添加来源信息
-        output.push_str(&format!("\n🔗 来源: Context7 - {}\n", request.library));
+        output.push_str(&format!("\n\n---\n🔗 来源: Context7 - {}\n", request.library));
 
         output
     }

@@ -52,6 +52,37 @@ const context7Config = ref({
 // Context7 测试状态
 const context7TestLoading = ref(false)
 const context7TestResult = ref<{ success: boolean, message: string, preview?: string } | null>(null)
+const context7TestLibrary = ref('spring-projects/spring-framework')
+const context7TestTopic = ref('core')
+
+// Context7 常用库列表
+const context7PopularLibraries = [
+  // Java 生态
+  { label: 'Spring Framework', value: 'spring-projects/spring-framework', category: 'Java' },
+  { label: 'Spring Boot', value: 'spring-projects/spring-boot', category: 'Java' },
+  { label: 'MyBatis', value: 'mybatis/mybatis-3', category: 'Java' },
+  { label: 'MyBatis-Plus', value: 'baomidou/mybatis-plus', category: 'Java' },
+  { label: 'Hutool', value: 'dromara/hutool', category: 'Java' },
+  { label: 'Guava', value: 'google/guava', category: 'Java' },
+  { label: 'Apache Commons Lang', value: 'apache/commons-lang', category: 'Java' },
+  { label: 'Jackson', value: 'FasterXML/jackson', category: 'Java' },
+  { label: 'Lombok', value: 'projectlombok/lombok', category: 'Java' },
+  // 前端框架
+  { label: 'React', value: 'facebook/react', category: '前端' },
+  { label: 'Vue.js', value: 'vuejs/vue', category: '前端' },
+  { label: 'Next.js', value: 'vercel/next.js', category: '前端' },
+  { label: 'Nuxt', value: 'nuxt/nuxt', category: '前端' },
+  { label: 'Vite', value: 'vitejs/vite', category: '前端' },
+  // 后端框架
+  { label: 'Express', value: 'expressjs/express', category: '后端' },
+  { label: 'FastAPI', value: 'tiangolo/fastapi', category: '后端' },
+  { label: 'Django', value: 'django/django', category: '后端' },
+  { label: 'Flask', value: 'pallets/flask', category: '后端' },
+  // Rust
+  { label: 'Tokio', value: 'tokio-rs/tokio', category: 'Rust' },
+  { label: 'Axum', value: 'tokio-rs/axum', category: 'Rust' },
+  { label: 'Tauri', value: 'tauri-apps/tauri', category: 'Rust' },
+]
 
 // 建议项（用于多选 + 标签）
 const extOptions = ref([
@@ -393,7 +424,11 @@ async function testContext7Connection() {
     context7TestLoading.value = true
     context7TestResult.value = null
 
-    const result = await invoke('test_context7_connection') as {
+    // 传递用户选择的库和主题
+    const result = await invoke('test_context7_connection', {
+      library: context7TestLibrary.value || null,
+      topic: context7TestTopic.value || null,
+    }) as {
       success: boolean
       message: string
       preview?: string
@@ -1104,21 +1139,60 @@ watch(() => acemcpConfig.value.text_extensions, (list) => {
 
           <n-divider />
 
+          <!-- 连接测试区域 -->
           <n-space vertical size="medium">
-            <div class="flex items-center justify-between">
-              <span class="text-sm font-medium">连接测试</span>
+            <span class="text-sm font-medium">连接测试</span>
+
+            <!-- 常用库快速选择 -->
+            <n-form-item label="选择测试库">
+              <n-select
+                v-model:value="context7TestLibrary"
+                :options="context7PopularLibraries.map(lib => ({ label: `${lib.label} (${lib.category})`, value: lib.value }))"
+                filterable
+                placeholder="选择或搜索常用库"
+                clearable
+              />
+            </n-form-item>
+
+            <!-- 自定义库输入 -->
+            <n-form-item label="或输入库标识符">
+              <n-input
+                v-model:value="context7TestLibrary"
+                placeholder="格式: owner/repo (例如: dromara/hutool)"
+                clearable
+              />
+              <template #feedback>
+                <div class="text-xs opacity-60">
+                  库标识符格式为 <code>owner/repo</code>，可在 <a href="https://context7.com" target="_blank" class="text-blue-500 hover:underline">context7.com</a> 搜索
+                </div>
+              </template>
+            </n-form-item>
+
+            <!-- 查询主题 -->
+            <n-form-item label="查询主题 (可选)">
+              <n-input
+                v-model:value="context7TestTopic"
+                placeholder="例如: core, routing, authentication"
+                clearable
+              />
+            </n-form-item>
+
+            <!-- 测试按钮 -->
+            <div class="flex justify-end">
               <n-button
                 type="primary"
                 :loading="context7TestLoading"
+                :disabled="!context7TestLibrary"
                 @click="testContext7Connection"
               >
                 <template #icon>
                   <div class="i-carbon-play" />
                 </template>
-                测试连接
+                测试查询
               </n-button>
             </div>
 
+            <!-- 测试结果 -->
             <n-alert
               v-if="context7TestResult"
               :type="context7TestResult.success ? 'success' : 'error'"
@@ -1128,20 +1202,36 @@ watch(() => acemcpConfig.value.text_extensions, (list) => {
                 <div :class="context7TestResult.success ? 'i-carbon-checkmark-filled' : 'i-carbon-warning-filled'" />
               </template>
               <p class="text-sm">{{ context7TestResult.message }}</p>
-              <div v-if="context7TestResult.preview" class="mt-2 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono">
+              <div v-if="context7TestResult.preview" class="mt-2 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
                 {{ context7TestResult.preview }}
               </div>
             </n-alert>
-
-            <n-alert type="info" title="测试说明">
-              <template #icon>
-                <div class="i-carbon-information" />
-              </template>
-              <p class="text-sm">
-                测试将查询 Spring Framework 核心文档，验证 API 连接是否正常。
-              </p>
-            </n-alert>
           </n-space>
+
+          <n-divider />
+
+          <!-- 常用库参考 -->
+          <n-collapse>
+            <n-collapse-item title="📚 常用库标识符参考" name="libraries">
+              <n-space vertical size="small">
+                <div v-for="category in ['Java', '前端', '后端', 'Rust']" :key="category">
+                  <div class="text-sm font-medium mb-1">{{ category }}</div>
+                  <n-space size="small">
+                    <n-tag
+                      v-for="lib in context7PopularLibraries.filter(l => l.category === category)"
+                      :key="lib.value"
+                      size="small"
+                      :bordered="false"
+                      class="cursor-pointer"
+                      @click="context7TestLibrary = lib.value"
+                    >
+                      {{ lib.label }}
+                    </n-tag>
+                  </n-space>
+                </div>
+              </n-space>
+            </n-collapse-item>
+          </n-collapse>
         </n-space>
       </div>
 

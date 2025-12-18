@@ -5,6 +5,8 @@ use super::types::{Context7Request, Context7Config, TestConnectionResponse};
 /// 测试 Context7 连接
 #[tauri::command]
 pub async fn test_context7_connection(
+    library: Option<String>,
+    topic: Option<String>,
     state: State<'_, AppState>
 ) -> Result<TestConnectionResponse, String> {
     // 读取配置并立即释放锁
@@ -19,10 +21,14 @@ pub async fn test_context7_connection(
         }
     }; // config 在这里自动 drop
 
-    // 执行测试查询 (查询 Spring Framework 核心文档)
+    // 使用用户指定的库，或默认使用 Spring Framework
+    let test_library = library.unwrap_or_else(|| "spring-projects/spring-framework".to_string());
+    let test_topic = topic.or_else(|| Some("core".to_string()));
+
+    // 执行测试查询
     let test_request = Context7Request {
-        library: "spring-projects/spring-framework".to_string(),
-        topic: Some("core".to_string()),
+        library: test_library.clone(),
+        topic: test_topic,
         version: None,
         page: Some(1),
     };
@@ -32,7 +38,7 @@ pub async fn test_context7_connection(
         Ok(preview) => {
             Ok(TestConnectionResponse {
                 success: true,
-                message: "连接成功! 已获取 Spring Framework 文档".to_string(),
+                message: format!("连接成功! 已获取 {} 文档", test_library),
                 preview: Some(preview),
             })
         }
@@ -54,7 +60,6 @@ async fn execute_test_query(
     use reqwest::header::AUTHORIZATION;
     use reqwest::Client;
     use std::time::Duration;
-    use super::types::Context7Response;
 
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
@@ -83,42 +88,45 @@ async fn execute_test_query(
     // 发送请求
     let response = req_builder.send().await
         .map_err(|e| format!("请求失败: {}", e))?;
-    
+
     let status = response.status();
 
     // 处理错误状态码
     if !status.is_success() {
         let error_text = response.text().await.unwrap_or_else(|_| "无法读取错误信息".to_string());
-        return Err(format_test_error(status.as_u16(), &error_text));
+        return Err(format_test_error(status.as_u16(), &error_text, &request.library));
     }
 
-    // 解析响应
+    // 读取响应文本 (Context7 API 返回纯文本 Markdown，不是 JSON)
     let response_text = response.text().await
         .map_err(|e| format!("读取响应失败: {}", e))?;
-    
-    let api_response: Context7Response = serde_json::from_str(&response_text)
-        .map_err(|e| format!("解析响应失败: {}", e))?;
 
-    // 生成预览文本 (只显示第一个片段的前200个字符)
-    let preview = if let Some(first_snippet) = api_response.snippets.first() {
-        let content = &first_snippet.content;
-        if content.len() > 200 {
-            format!("{}...", &content[..200])
+    // 如果响应为空
+    if response_text.trim().is_empty() {
+        return Ok("未找到文档内容".to_string());
+    }
+
+    // 生成预览文本 (只显示前 300 个字符)
+    let preview = if response_text.len() > 300 {
+        // 尝试在合适的位置截断（避免截断单词）
+        let truncated = &response_text[..300];
+        if let Some(last_newline) = truncated.rfind('\n') {
+            format!("{}...", &truncated[..last_newline])
         } else {
-            content.clone()
+            format!("{}...", truncated)
         }
     } else {
-        "未找到文档内容".to_string()
+        response_text
     };
 
     Ok(preview)
 }
 
 /// 格式化测试错误消息
-fn format_test_error(status_code: u16, error_text: &str) -> String {
+fn format_test_error(status_code: u16, error_text: &str, library: &str) -> String {
     match status_code {
         401 => "API 密钥无效或已过期".to_string(),
-        404 => "测试库不存在 (spring-projects/spring-framework)".to_string(),
+        404 => format!("库 \"{}\" 不存在，请检查库标识符是否正确", library),
         429 => "速率限制已达上限，建议配置 API Key".to_string(),
         500..=599 => format!("Context7 服务器错误: {}", error_text),
         _ => format!("请求失败 (状态码: {}): {}", status_code, error_text),
