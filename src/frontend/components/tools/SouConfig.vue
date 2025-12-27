@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 代码搜索工具 (Acemcp/Sou) 配置组件
+ * 包含：基础配置、高级配置、日志调试、索引管理
+ */
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 import { onMounted, ref, watch } from 'vue'
@@ -6,27 +10,22 @@ import { useAcemcpSync } from '../../composables/useAcemcpSync'
 import ProjectIndexManager from '../settings/ProjectIndexManager.vue'
 import ConfigSection from '../common/ConfigSection.vue'
 
-// Props & Emits
+// Props
 const props = defineProps<{
   active: boolean
 }>()
 
-// Use Message
 const message = useMessage()
 
-// Acemcp Sync State
+// Acemcp 同步状态
 const {
   autoIndexEnabled,
-  triggerIndexUpdate,
-  fetchProjectStatus,
-  setCurrentProject,
   fetchAutoIndexEnabled,
   setAutoIndexEnabled,
   fetchWatchingProjects,
-  fetchAllStatus
 } = useAcemcpSync()
 
-// Configuration State
+// 配置状态
 const config = ref({
   base_url: '',
   token: '',
@@ -38,15 +37,13 @@ const config = ref({
 
 const loadingConfig = ref(false)
 
-// Debug State
+// 调试状态
 const debugProjectRoot = ref('')
 const debugQuery = ref('')
 const debugResult = ref('')
 const debugLoading = ref(false)
-const indexManagementProjectRoot = ref('')
-const indexingInProgress = ref(false)
 
-// Options
+// 选项数据
 const extOptions = ref([
   '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', 
   '.cpp', '.c', '.h', '.hpp', '.cs', '.rb', '.php', '.md', 
@@ -67,7 +64,7 @@ const excludeOptions = ref([
   '.gradle', 'target', 'bin', 'obj'
 ].map(v => ({ label: v, value: v })))
 
-// --- Actions ---
+// --- 操作函数 ---
 
 async function loadAcemcpConfig() {
   loadingConfig.value = true
@@ -83,7 +80,7 @@ async function loadAcemcpConfig() {
       exclude_patterns: res.exclude_patterns,
     }
 
-    // Ensure options exist
+    // 确保选项存在
     const extSet = new Set(extOptions.value.map(o => o.value))
     for (const v of config.value.text_extensions) {
       if (!extSet.has(v)) extOptions.value.push({ label: v, value: v })
@@ -144,7 +141,6 @@ async function testConnection() {
   }
 }
 
-// Debug actions
 async function runToolDebug() {
   if (!debugProjectRoot.value || !debugQuery.value) {
     message.warning('请填写项目路径和查询语句')
@@ -200,7 +196,6 @@ async function clearCache() {
   }
 }
 
-// Index Management
 async function toggleAutoIndex() {
   try {
     await setAutoIndexEnabled(!autoIndexEnabled.value)
@@ -210,7 +205,7 @@ async function toggleAutoIndex() {
   }
 }
 
-// Watchers
+// 监听扩展名变化，自动规范化
 watch(() => config.value.text_extensions, (list) => {
   const norm = Array.from(new Set((list || []).map(s => {
     const t = s.trim().toLowerCase()
@@ -222,7 +217,7 @@ watch(() => config.value.text_extensions, (list) => {
   }
 }, { deep: true })
 
-// Lifecycle
+// 组件挂载
 onMounted(async () => {
   if (props.active) {
     await loadAcemcpConfig()
@@ -233,19 +228,18 @@ onMounted(async () => {
   }
 })
 
-// Expose save method (though currently button is inside component, parent might want to trigger it)
 defineExpose({ saveConfig })
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
-    <!-- Main Tabs -->
-    <n-tabs type="line" animated class="flex-1">
+  <div class="sou-config">
+    <n-tabs type="line" animated>
+      <!-- 基础配置 -->
       <n-tab-pane name="basic" tab="基础配置">
-        <n-scrollbar style="max-height: 60vh" class="pr-4">
-          <n-space vertical size="large">
+        <n-scrollbar class="tab-scrollbar">
+          <n-space vertical size="large" class="tab-content">
             <ConfigSection title="连接设置" description="配置代码搜索服务的连接信息">
-              <n-grid :x-gap="24" :y-gap="24" :cols="1">
+              <n-grid :x-gap="24" :y-gap="16" :cols="1">
                 <n-grid-item>
                   <n-form-item label="API端点URL">
                     <n-input v-model:value="config.base_url" placeholder="https://api.example.com" clearable />
@@ -257,7 +251,7 @@ defineExpose({ saveConfig })
                       v-model:value="config.token"
                       type="password"
                       show-password-on="click"
-                      placeholder="Enter token"
+                      placeholder="输入认证令牌"
                       clearable
                     />
                   </n-form-item>
@@ -280,18 +274,20 @@ defineExpose({ saveConfig })
               </n-grid>
             </ConfigSection>
             
-            <div class="flex justify-end pt-4">
-               <n-button type="primary" @click="saveConfig" size="medium">
-                 保存配置
-               </n-button>
+            <div class="flex justify-end">
+              <n-button type="primary" @click="saveConfig">
+                <template #icon><div class="i-carbon-save" /></template>
+                保存配置
+              </n-button>
             </div>
           </n-space>
         </n-scrollbar>
       </n-tab-pane>
 
+      <!-- 高级配置 -->
       <n-tab-pane name="advanced" tab="高级配置">
-        <n-scrollbar style="max-height: 60vh" class="pr-4">
-          <n-space vertical size="large">
+        <n-scrollbar class="tab-scrollbar">
+          <n-space vertical size="large" class="tab-content">
             <ConfigSection title="文件过滤" description="设置需索引的文件类型和排除规则">
               <n-space vertical size="medium">
                 <n-form-item label="包含扩展名">
@@ -301,7 +297,9 @@ defineExpose({ saveConfig })
                     multiple tag filterable clearable
                     placeholder="输入或选择扩展名 (.py)"
                   />
-                  <template #feedback>小写，点开头，自动去重</template>
+                  <template #feedback>
+                    <span class="form-feedback">小写，点开头，自动去重</span>
+                  </template>
                 </n-form-item>
 
                 <n-form-item label="排除模式">
@@ -311,42 +309,46 @@ defineExpose({ saveConfig })
                     multiple tag filterable clearable
                     placeholder="输入或选择排除模式 (node_modules)"
                   />
-                  <template #feedback>支持 glob 通配符</template>
+                  <template #feedback>
+                    <span class="form-feedback">支持 glob 通配符</span>
+                  </template>
                 </n-form-item>
               </n-space>
             </ConfigSection>
 
-            <div class="flex justify-end pt-4">
-               <n-button type="primary" @click="saveConfig" size="medium">
-                 保存配置
-               </n-button>
+            <div class="flex justify-end">
+              <n-button type="primary" @click="saveConfig">
+                <template #icon><div class="i-carbon-save" /></template>
+                保存配置
+              </n-button>
             </div>
           </n-space>
         </n-scrollbar>
       </n-tab-pane>
 
+      <!-- 日志与调试 -->
       <n-tab-pane name="debug" tab="日志与调试">
-        <n-scrollbar style="max-height: 60vh" class="pr-4">
-          <n-space vertical size="large">
+        <n-scrollbar class="tab-scrollbar">
+          <n-space vertical size="large" class="tab-content">
             <ConfigSection title="工具状态" :no-card="true">
-              <n-alert type="info" :bordered="false" class="mb-4">
+              <n-alert type="info" :bordered="false" class="info-alert">
                 <template #icon><div class="i-carbon-terminal" /></template>
-                日志路径: <code>~/.sanshu/log/acemcp.log</code>
+                日志路径: <code class="code-inline">~/.sanshu/log/acemcp.log</code>
               </n-alert>
               
-              <n-space>
-                 <n-button size="small" secondary @click="testConnection">
-                   <template #icon><div class="i-carbon-connection-signal" /></template>
-                   测试连接
-                 </n-button>
-                 <n-button size="small" secondary @click="viewLogs">
-                   <template #icon><div class="i-carbon-document" /></template>
-                   查看日志
-                 </n-button>
-                 <n-button size="small" secondary @click="clearCache">
-                   <template #icon><div class="i-carbon-clean" /></template>
-                   清除缓存
-                 </n-button>
+              <n-space class="mt-3">
+                <n-button size="small" secondary @click="testConnection">
+                  <template #icon><div class="i-carbon-connection-signal" /></template>
+                  测试连接
+                </n-button>
+                <n-button size="small" secondary @click="viewLogs">
+                  <template #icon><div class="i-carbon-document" /></template>
+                  查看日志
+                </n-button>
+                <n-button size="small" secondary @click="clearCache">
+                  <template #icon><div class="i-carbon-clean" /></template>
+                  清除缓存
+                </n-button>
               </n-space>
             </ConfigSection>
 
@@ -359,24 +361,20 @@ defineExpose({ saveConfig })
                   <n-input v-model:value="debugQuery" type="textarea" :rows="2" placeholder="输入搜索意图..." />
                 </n-form-item>
                 
-                <div>
-                   <n-button
-                    type="primary"
-                    ghost
-                    :loading="debugLoading"
-                    :disabled="!debugProjectRoot || !debugQuery"
-                    @click="runToolDebug"
-                  >
-                    <template #icon><div class="i-carbon-play" /></template>
-                    运行调试
-                  </n-button>
-                </div>
+                <n-button
+                  type="primary"
+                  ghost
+                  :loading="debugLoading"
+                  :disabled="!debugProjectRoot || !debugQuery"
+                  @click="runToolDebug"
+                >
+                  <template #icon><div class="i-carbon-play" /></template>
+                  运行调试
+                </n-button>
 
-                <div v-if="debugResult" class="mt-2">
-                   <div class="text-xs text-gray-500 mb-1">结果输出:</div>
-                   <div class="bg-gray-50 dark:bg-gray-800 p-2 rounded text-xs font-mono whitespace-pre-wrap max-h-60 overflow-y-auto border border-gray-200 dark:border-gray-700">
-                     {{ debugResult }}
-                   </div>
+                <div v-if="debugResult" class="debug-result">
+                  <div class="result-label">结果输出:</div>
+                  <div class="result-content">{{ debugResult }}</div>
                 </div>
               </n-space>
             </ConfigSection>
@@ -384,30 +382,144 @@ defineExpose({ saveConfig })
         </n-scrollbar>
       </n-tab-pane>
 
+      <!-- 索引管理 -->
       <n-tab-pane name="index" tab="索引管理">
-        <n-scrollbar style="max-height: 60vh" class="pr-4">
-          <n-space vertical size="large">
+        <n-scrollbar class="tab-scrollbar">
+          <n-space vertical size="large" class="tab-content">
             <ConfigSection title="全局策略">
-               <div class="flex items-center justify-between">
-                 <div class="flex items-center gap-3">
-                   <div class="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                     <div class="i-carbon-automatic w-5 h-5 text-blue-500" />
-                   </div>
-                   <div>
-                     <div class="font-medium text-gray-900 dark:text-gray-100">自动索引</div>
-                     <div class="text-xs text-gray-500">文件变更时自动更新 (1.5s 防抖)</div>
-                   </div>
-                 </div>
-                 <n-switch :value="autoIndexEnabled" @update:value="toggleAutoIndex" />
-               </div>
+              <div class="auto-index-toggle">
+                <div class="toggle-info">
+                  <div class="toggle-icon">
+                    <div class="i-carbon-automatic w-5 h-5 text-primary-500" />
+                  </div>
+                  <div>
+                    <div class="toggle-title">自动索引</div>
+                    <div class="toggle-desc">文件变更时自动更新 (1.5s 防抖)</div>
+                  </div>
+                </div>
+                <n-switch :value="autoIndexEnabled" @update:value="toggleAutoIndex" />
+              </div>
             </ConfigSection>
 
-            <div class="mt-2">
-              <ProjectIndexManager />
-            </div>
+            <ProjectIndexManager />
           </n-space>
         </n-scrollbar>
       </n-tab-pane>
     </n-tabs>
   </div>
 </template>
+
+<style scoped>
+.sou-config {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-scrollbar {
+  max-height: 58vh;
+}
+
+.tab-content {
+  padding-right: 12px;
+  padding-bottom: 16px;
+}
+
+/* 表单反馈文字 */
+.form-feedback {
+  font-size: 11px;
+  color: var(--color-on-surface-muted, #9ca3af);
+}
+
+/* 信息提示 */
+.info-alert {
+  border-radius: 8px;
+}
+
+/* 代码样式 */
+.code-inline {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  background: var(--color-container, rgba(128, 128, 128, 0.1));
+}
+
+:root.dark .code-inline {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 调试结果 */
+.debug-result {
+  margin-top: 8px;
+}
+
+.result-label {
+  font-size: 12px;
+  color: var(--color-on-surface-secondary, #6b7280);
+  margin-bottom: 6px;
+}
+
+:root.dark .result-label {
+  color: #9ca3af;
+}
+
+.result-content {
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-container, rgba(128, 128, 128, 0.08));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
+}
+
+:root.dark .result-content {
+  background: rgba(24, 24, 28, 0.8);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 自动索引开关 */
+.auto-index-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toggle-icon {
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.1);
+}
+
+:root.dark .toggle-icon {
+  background: rgba(20, 184, 166, 0.15);
+}
+
+.toggle-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-on-surface, #111827);
+}
+
+:root.dark .toggle-title {
+  color: #e5e7eb;
+}
+
+.toggle-desc {
+  font-size: 12px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .toggle-desc {
+  color: #9ca3af;
+}
+</style>
