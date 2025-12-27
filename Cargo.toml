@@ -38,7 +38,8 @@ thiserror = "1.0"
 uuid = { version = "1.0", features = [ "v4" ] }
 chrono = { version = "0.4", features = [ "serde" ] }
 dirs = "5.0"
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = [
+# 使用 crates.io 稳定版本，避免上游 git 仓库变动导致编译失败
+rmcp = { version = "0.12.0", features = [
   "server",
   "transport-io"
 ] }
