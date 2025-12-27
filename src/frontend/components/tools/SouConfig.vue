@@ -72,12 +72,55 @@ interface SpeedTestResult {
   success: boolean
 }
 
+interface SpeedTestQueryDetail {
+  query: string
+  proxy_time_ms: number | null
+  direct_time_ms: number | null
+  success: boolean
+  error: string | null
+}
+
 const proxyDetecting = ref(false)
 const detectedProxies = ref<DetectedProxy[]>([])
 const proxyTesting = ref(false)
 const speedTestResult = ref<SpeedTestResult | null>(null)
 const speedTestMode = ref<'proxy' | 'direct' | 'compare'>('compare')
 const speedTestQuery = ref('代码搜索测试')
+const multiQuerySearchDetails = ref<SpeedTestQueryDetail[]>([])
+
+const speedTestQueries = computed(() => {
+  return (speedTestQuery.value || '')
+    .split(/\r?\n/g)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+})
+
+const multiQuerySearchSummary = computed(() => {
+  const list = multiQuerySearchDetails.value
+  if (list.length <= 1) {
+    return null
+  }
+
+  const proxyTimes = list.map(i => i.proxy_time_ms).filter((v): v is number => v !== null)
+  const directTimes = list.map(i => i.direct_time_ms).filter((v): v is number => v !== null)
+
+  const proxyAvg = proxyTimes.length > 0
+    ? Math.round(proxyTimes.reduce((a, b) => a + b, 0) / proxyTimes.length)
+    : null
+
+  const directAvg = directTimes.length > 0
+    ? Math.round(directTimes.reduce((a, b) => a + b, 0) / directTimes.length)
+    : null
+
+  return {
+    total: list.length,
+    proxy_avg_ms: proxyAvg,
+    direct_avg_ms: directAvg,
+    proxy_ok: proxyTimes.length,
+    direct_ok: directTimes.length,
+  }
+})
 const extraDetectPortsText = ref('')
 const proxyPickerVisible = ref(false)
 const selectedProxyIndex = ref(0)
@@ -599,28 +642,101 @@ async function runSpeedTest() {
 
   proxyTesting.value = true
   speedTestResult.value = null
+  multiQuerySearchDetails.value = []
 
   try {
+    const rawQueries = (speedTestQuery.value || '')
+      .split(/\r?\n/g)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    const queries = rawQueries.slice(0, 5)
+    if (queries.length === 0) {
+      message.warning('请输入至少一个测试查询')
+      return
+    }
+    if (rawQueries.length > 5) {
+      message.info('测试查询过多，已截断为前 5 条')
+    }
+
     const uploadMaxFiles = projectUploadMode.value === 'sample'
       ? Math.max(1, Number(projectUploadMaxFiles.value) || 200)
       : undefined
 
-    const result = await invoke('test_acemcp_proxy_speed', {
-      testMode: speedTestMode.value,
-      proxyHost: config.value.proxy_host,
-      proxyPort: config.value.proxy_port,
-      proxyType: config.value.proxy_type,
-      proxyUsername: config.value.proxy_username,
-      proxyPassword: config.value.proxy_password,
-      testQuery: speedTestQuery.value,
-      projectRootPath: speedTestProjectRoot.value,
-      projectUploadMode: projectUploadMode.value,
-      projectUploadMaxFiles: uploadMaxFiles,
-    }) as SpeedTestResult
+    let firstResult: SpeedTestResult | null = null
 
-    speedTestResult.value = result
+    for (let i = 0; i < queries.length; i++) {
+      const q = queries[i]
 
-    if (result.success) {
+      // 避免多查询情况下重复触发上传测速：仅第 1 条查询执行上传测速
+      const projectRootPath = i === 0 ? speedTestProjectRoot.value : ''
+
+      const result = await invoke('test_acemcp_proxy_speed', {
+        testMode: speedTestMode.value,
+        proxyHost: config.value.proxy_host,
+        proxyPort: config.value.proxy_port,
+        proxyType: config.value.proxy_type,
+        proxyUsername: config.value.proxy_username,
+        proxyPassword: config.value.proxy_password,
+        testQuery: q,
+        projectRootPath,
+        projectUploadMode: projectUploadMode.value,
+        projectUploadMaxFiles: uploadMaxFiles,
+      }) as SpeedTestResult
+
+      if (i === 0) {
+        firstResult = result
+      }
+
+      const searchMetric = (result.metrics || []).find(m => m.metric_type === 'search')
+      multiQuerySearchDetails.value.push({
+        query: q,
+        proxy_time_ms: searchMetric?.proxy_time_ms ?? null,
+        direct_time_ms: searchMetric?.direct_time_ms ?? null,
+        success: searchMetric?.success ?? false,
+        error: searchMetric?.error ?? null,
+      })
+    }
+
+    if (!firstResult) {
+      throw new Error('测速结果为空')
+    }
+
+    // 多查询：在卡片里补充“语义搜索（平均）”指标，并将默认搜索指标标记为 Q1
+    if (queries.length > 1) {
+      const search0 = (firstResult.metrics || []).find(m => m.metric_type === 'search')
+      if (search0) {
+        search0.name = '🔍 语义搜索 (Q1)'
+      }
+
+      const s = multiQuerySearchSummary.value
+      if (s) {
+        const avgMetric: SpeedTestMetric = {
+          name: `🔎 语义搜索（${s.total} 条平均）`,
+          metric_type: 'search_multi_avg',
+          proxy_time_ms: s.proxy_avg_ms,
+          direct_time_ms: s.direct_avg_ms,
+          success: true,
+          error: null,
+        }
+
+        // 如果某一侧完全没有成功数据，则标记为失败并给出原因
+        if (speedTestMode.value !== 'direct' && s.proxy_ok === 0) {
+          avgMetric.success = false
+          avgMetric.error = '代理侧无有效搜索耗时（全部失败或未返回）'
+        }
+        if (speedTestMode.value !== 'proxy' && s.direct_ok === 0) {
+          avgMetric.success = false
+          avgMetric.error = [avgMetric.error, '直连侧无有效搜索耗时（全部失败或未返回）'].filter(Boolean).join('；')
+        }
+
+        firstResult.metrics.push(avgMetric)
+      }
+    }
+
+    speedTestResult.value = firstResult
+
+    if (firstResult.success) {
       message.success('测速完成')
     }
     else {
@@ -873,11 +989,20 @@ defineExpose({ saveConfig })
                   <div class="flex items-center gap-3">
                     <div class="i-carbon-network-3 text-lg text-blue-500" />
                     <div>
-                      <div class="font-medium text-sm">启用代理</div>
-                      <div class="text-xs text-gray-500">启用后，所有 ACE API 请求将通过代理</div>
+                      <div class="font-medium text-sm">
+                        启用代理
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        启用后，所有 ACE API 请求将通过代理
+                      </div>
                     </div>
                   </div>
-                  <n-switch v-model:value="config.proxy_enabled" :round="false" />
+                  <n-tooltip>
+                    <template #trigger>
+                      <n-switch v-model:value="config.proxy_enabled" :round="false" />
+                    </template>
+                    <span>建议先完成测速验证后再开启；仅直连测速无需开启代理</span>
+                  </n-tooltip>
                 </div>
 
                 <!-- 代理配置表单 -->
@@ -935,13 +1060,20 @@ defineExpose({ saveConfig })
                         placeholder="留空表示无需认证"
                         clearable
                       />
+                      <template #feedback>
+                        <span class="form-feedback">
+                          提示：用户名/密码会随配置保存到本地；复制/导出报告不会包含密码。
+                        </span>
+                      </template>
                     </n-form-item>
                   </n-grid-item>
                 </n-grid>
 
                 <!-- 测速配置 -->
                 <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                  <div class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">测速配置</div>
+                  <div class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">
+                    测速配置
+                  </div>
                   <n-grid :x-gap="16" :y-gap="12" :cols="12">
                     <n-grid-item :span="4">
                       <n-form-item label="模式" size="small">
@@ -964,6 +1096,14 @@ defineExpose({ saveConfig })
                           placeholder="每行一个关键词（最多 5 行），例如：\n函数定义\n类名\n变量名"
                           clearable
                         />
+                        <template #feedback>
+                          <span class="form-feedback">
+                            每行 1 条，最多 5 条；多条查询时仅第 1 条包含上传测速，后续只做 Ping + 语义搜索。
+                            <span v-if="speedTestQueries.length > 1">
+                              当前：{{ speedTestQueries.length }} 条
+                            </span>
+                          </span>
+                        </template>
                       </n-form-item>
                     </n-grid-item>
                     <n-grid-item :span="12">
@@ -989,6 +1129,11 @@ defineExpose({ saveConfig })
                             { label: '全量（可能很慢）', value: 'full' },
                           ]"
                         />
+                        <template #feedback>
+                          <span class="form-feedback">
+                            采样更快且副作用更小；全量可能耗时较长并消耗更多网络流量。
+                          </span>
+                        </template>
                       </n-form-item>
                     </n-grid-item>
                     <n-grid-item :span="6">
@@ -999,6 +1144,11 @@ defineExpose({ saveConfig })
                           :disabled="projectUploadMode === 'full'"
                           class="w-full"
                         />
+                        <template #feedback>
+                          <span class="form-feedback">
+                            仅采样模式生效。
+                          </span>
+                        </template>
                       </n-form-item>
                     </n-grid-item>
                   </n-grid>
@@ -1006,7 +1156,9 @@ defineExpose({ saveConfig })
 
                 <!-- 检测配置 -->
                 <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                  <div class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">检测配置</div>
+                  <div class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">
+                    检测配置
+                  </div>
                   <n-form-item label="额外端口（可选）" size="small">
                     <n-input
                       v-model:value="extraDetectPortsText"
@@ -1014,7 +1166,9 @@ defineExpose({ saveConfig })
                       clearable
                     />
                     <template #feedback>
-                      <span class="form-feedback">会同时尝试 HTTP 与 SOCKS5</span>
+                      <span class="form-feedback">
+                        会同时尝试 HTTP 与 SOCKS5
+                      </span>
                     </template>
                   </n-form-item>
                 </div>
@@ -1028,7 +1182,9 @@ defineExpose({ saveConfig })
                     :disabled="proxyDetecting"
                     @click="detectProxy"
                   >
-                    <template #icon><div class="i-carbon-search" /></template>
+                    <template #icon>
+                      <div class="i-carbon-search" />
+                    </template>
                     自动检测
                   </n-button>
                   <n-tooltip :disabled="!speedTestDisabled">
@@ -1041,7 +1197,9 @@ defineExpose({ saveConfig })
                           :disabled="speedTestDisabled"
                           @click="runSpeedTest"
                         >
-                          <template #icon><div class="i-carbon-rocket" /></template>
+                          <template #icon>
+                            <div class="i-carbon-rocket" />
+                          </template>
                           测速
                         </n-button>
                       </span>
@@ -1053,7 +1211,9 @@ defineExpose({ saveConfig })
                 <!-- 检测到的代理列表 -->
                 <n-collapse-transition :show="detectedProxies.length > 1">
                   <div class="mt-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                    <div class="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">检测到 {{ detectedProxies.length }} 个可用代理</div>
+                    <div class="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">
+                      检测到 {{ detectedProxies.length }} 个可用代理
+                    </div>
                     <div class="flex flex-wrap gap-2">
                       <n-tag
                         v-for="(p, idx) in detectedProxies"
@@ -1077,7 +1237,9 @@ defineExpose({ saveConfig })
                   :style="{ width: '520px' }"
                 >
                   <n-space vertical size="medium">
-                    <div class="text-xs text-gray-500">检测到多个可用代理，请选择一个用于填充配置（建议先测速再启用）。</div>
+                    <div class="text-xs text-gray-500">
+                      检测到多个可用代理，请选择一个用于填充配置（建议先测速再启用）。
+                    </div>
                     <n-radio-group v-model:value="selectedProxyIndex">
                       <n-space vertical size="small">
                         <n-radio
@@ -1090,8 +1252,12 @@ defineExpose({ saveConfig })
                       </n-space>
                     </n-radio-group>
                     <div class="flex justify-end gap-2">
-                      <n-button size="small" secondary @click="proxyPickerVisible = false">取消</n-button>
-                      <n-button type="primary" size="small" @click="confirmProxySelection">使用该代理</n-button>
+                      <n-button size="small" secondary @click="proxyPickerVisible = false">
+                        取消
+                      </n-button>
+                      <n-button type="primary" size="small" @click="confirmProxySelection">
+                        使用该代理
+                      </n-button>
                     </div>
                   </n-space>
                 </n-modal>
@@ -1104,7 +1270,9 @@ defineExpose({ saveConfig })
                   :style="{ width: '640px' }"
                 >
                   <n-space vertical size="medium">
-                    <div class="text-xs text-gray-500">请选择一个已索引项目用于上传测速（索引时间/文件数来自本地状态）。</div>
+                    <div class="text-xs text-gray-500">
+                      请选择一个已索引项目用于上传测速（索引时间/文件数来自本地状态）。
+                    </div>
                     <n-radio-group v-model:value="projectPickerSelected">
                       <n-space vertical size="small">
                         <n-radio
@@ -1117,9 +1285,30 @@ defineExpose({ saveConfig })
                       </n-space>
                     </n-radio-group>
                     <div class="flex justify-end gap-2">
-                      <n-button size="small" secondary :disabled="projectPickerLoading" @click="projectPickerVisible = false">取消</n-button>
-                      <n-button size="small" secondary :disabled="projectPickerLoading" @click="addProjectVisible = true">添加项目</n-button>
-                      <n-button type="primary" size="small" :loading="projectPickerLoading" @click="confirmProjectSelectionAndRun">开始测速</n-button>
+                      <n-button
+                        size="small"
+                        secondary
+                        :disabled="projectPickerLoading"
+                        @click="projectPickerVisible = false"
+                      >
+                        取消
+                      </n-button>
+                      <n-button
+                        size="small"
+                        secondary
+                        :disabled="projectPickerLoading"
+                        @click="addProjectVisible = true"
+                      >
+                        添加项目
+                      </n-button>
+                      <n-button
+                        type="primary"
+                        size="small"
+                        :loading="projectPickerLoading"
+                        @click="confirmProjectSelectionAndRun"
+                      >
+                        开始测速
+                      </n-button>
                     </div>
                   </n-space>
                 </n-modal>
@@ -1139,10 +1328,26 @@ defineExpose({ saveConfig })
                         clearable
                       />
                     </n-form-item>
-                    <div class="text-xs text-gray-500">索引完成后将自动开始测速。</div>
+                    <div class="text-xs text-gray-500">
+                      索引完成后将自动开始测速。
+                    </div>
                     <div class="flex justify-end gap-2">
-                      <n-button size="small" secondary :disabled="addProjectIndexing" @click="addProjectVisible = false">取消</n-button>
-                      <n-button type="primary" size="small" :loading="addProjectIndexing" @click="addProjectAndIndexAndRun">开始索引并测速</n-button>
+                      <n-button
+                        size="small"
+                        secondary
+                        :disabled="addProjectIndexing"
+                        @click="addProjectVisible = false"
+                      >
+                        取消
+                      </n-button>
+                      <n-button
+                        type="primary"
+                        size="small"
+                        :loading="addProjectIndexing"
+                        @click="addProjectAndIndexAndRun"
+                      >
+                        开始索引并测速
+                      </n-button>
                     </div>
                   </n-space>
                 </n-modal>
@@ -1151,7 +1356,9 @@ defineExpose({ saveConfig })
                 <n-collapse-transition :show="speedTestResult !== null">
                   <div v-if="speedTestResult" class="mt-2 p-4 rounded-lg bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700 border border-slate-200 dark:border-slate-600">
                     <div class="flex items-center justify-between mb-3">
-                      <div class="text-sm font-medium">测速结果</div>
+                      <div class="text-sm font-medium">
+                        测速结果
+                      </div>
                       <div class="flex items-center gap-2">
                         <n-button
                           size="tiny"
@@ -1160,17 +1367,33 @@ defineExpose({ saveConfig })
                           :disabled="proxyTesting"
                           @click="runSpeedTest"
                         >
-                          <template #icon><div class="i-carbon-renew" /></template>
+                          <template #icon>
+                            <div class="i-carbon-renew" />
+                          </template>
                           重新测试
                         </n-button>
-                        <n-button size="tiny" secondary @click="copySpeedTestReport">
-                          <template #icon><div class="i-carbon-copy" /></template>
-                          复制报告
-                        </n-button>
-                        <n-button size="tiny" secondary @click="downloadSpeedTestReport">
-                          <template #icon><div class="i-carbon-download" /></template>
-                          导出报告
-                        </n-button>
+                        <n-tooltip>
+                          <template #trigger>
+                            <n-button size="tiny" secondary @click="copySpeedTestReport">
+                              <template #icon>
+                                <div class="i-carbon-copy" />
+                              </template>
+                              复制报告
+                            </n-button>
+                          </template>
+                          <span>报告不包含租户 Token 与代理密码</span>
+                        </n-tooltip>
+                        <n-tooltip>
+                          <template #trigger>
+                            <n-button size="tiny" secondary @click="downloadSpeedTestReport">
+                              <template #icon>
+                                <div class="i-carbon-download" />
+                              </template>
+                              导出报告
+                            </n-button>
+                          </template>
+                          <span>导出 JSON，不包含租户 Token 与代理密码</span>
+                        </n-tooltip>
                         <n-tag :type="speedTestResult.success ? 'success' : 'warning'" size="small">
                           {{ speedTestResult.success ? '测试成功' : '部分失败' }}
                         </n-tag>
@@ -1180,11 +1403,69 @@ defineExpose({ saveConfig })
                     <!-- 测试环境信息 -->
                     <div class="mb-3 p-2 rounded bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
                       <div class="text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                        <div>时间：{{ formatSpeedTestTime(speedTestResult.timestamp) }}</div>
-                        <div>项目：<code class="code-inline">{{ speedTestProjectRoot || '（未选择）' }}</code></div>
+                        <div>
+                          时间：{{ formatSpeedTestTime(speedTestResult.timestamp) }}
+                        </div>
+                        <div>
+                          项目：
+                          <code class="code-inline">{{ speedTestProjectRoot || '（未选择）' }}</code>
+                        </div>
                         <div v-if="speedTestResult.mode !== 'direct'">
                           代理：{{ config.proxy_type.toUpperCase() }} {{ config.proxy_host }}:{{ config.proxy_port }}
                           <span v-if="config.proxy_username">（用户：{{ config.proxy_username }}）</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 多查询搜索汇总（仅多行查询时显示） -->
+                    <div
+                      v-if="multiQuerySearchSummary"
+                      class="mb-3 p-3 rounded-lg bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="text-xs font-medium text-slate-700 dark:text-slate-200">
+                          多查询搜索汇总（{{ multiQuerySearchSummary.total }} 条）
+                        </div>
+                        <n-tag type="info" size="small">
+                          仅 Q1 含上传测速
+                        </n-tag>
+                      </div>
+
+                      <div class="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                        <span v-if="speedTestResult.mode !== 'direct'">
+                          代理平均：{{ multiQuerySearchSummary.proxy_avg_ms !== null ? `${multiQuerySearchSummary.proxy_avg_ms}ms` : '-' }}
+                          （成功 {{ multiQuerySearchSummary.proxy_ok }}/{{ multiQuerySearchSummary.total }}）
+                        </span>
+                        <span v-if="speedTestResult.mode === 'compare'"> · </span>
+                        <span v-if="speedTestResult.mode !== 'proxy'">
+                          直连平均：{{ multiQuerySearchSummary.direct_avg_ms !== null ? `${multiQuerySearchSummary.direct_avg_ms}ms` : '-' }}
+                          （成功 {{ multiQuerySearchSummary.direct_ok }}/{{ multiQuerySearchSummary.total }}）
+                        </span>
+                        <span v-if="speedTestResult.mode === 'compare'">
+                          · 差异：{{ calcDiff(multiQuerySearchSummary.proxy_avg_ms, multiQuerySearchSummary.direct_avg_ms) }}
+                        </span>
+                      </div>
+
+                      <div class="mt-2 space-y-2">
+                        <div
+                          v-for="(d, idx) in multiQuerySearchDetails"
+                          :key="idx"
+                          class="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700/60"
+                        >
+                          <div class="text-xs text-gray-500 break-words">
+                            Q{{ idx + 1 }}：{{ d.query }}
+                          </div>
+                          <div class="mt-1 flex items-center justify-between text-sm">
+                            <div v-if="speedTestResult.mode !== 'direct'" class="text-blue-600">
+                              代理：{{ d.proxy_time_ms !== null ? `${d.proxy_time_ms}ms` : '-' }}
+                            </div>
+                            <div v-if="speedTestResult.mode !== 'proxy'" class="text-orange-600 text-right">
+                              直连：{{ d.direct_time_ms !== null ? `${d.direct_time_ms}ms` : '-' }}
+                            </div>
+                          </div>
+                          <div v-if="d.error" class="mt-1 text-xs text-red-500 break-words">
+                            {{ d.error }}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1208,19 +1489,25 @@ defineExpose({ saveConfig })
 
                           <div class="mt-2 flex items-end justify-between gap-3">
                             <div v-if="speedTestResult.mode !== 'direct'" class="min-w-[80px]">
-                              <div class="text-xs text-gray-500">代理</div>
+                              <div class="text-xs text-gray-500">
+                                代理
+                              </div>
                               <div :class="metric.proxy_time_ms !== null ? 'text-blue-600 font-semibold' : 'text-gray-400'">
                                 {{ metric.proxy_time_ms !== null ? `${metric.proxy_time_ms}ms` : '-' }}
                               </div>
                             </div>
                             <div v-if="speedTestResult.mode !== 'proxy'" class="min-w-[80px] text-right">
-                              <div class="text-xs text-gray-500">直连</div>
+                              <div class="text-xs text-gray-500">
+                                直连
+                              </div>
                               <div :class="metric.direct_time_ms !== null ? 'text-orange-600 font-semibold' : 'text-gray-400'">
                                 {{ metric.direct_time_ms !== null ? `${metric.direct_time_ms}ms` : '-' }}
                               </div>
                             </div>
                             <div v-if="speedTestResult.mode === 'compare'" class="min-w-[80px] text-right">
-                              <div class="text-xs text-gray-500">差异</div>
+                              <div class="text-xs text-gray-500">
+                                差异
+                              </div>
                               <div
                                 class="font-semibold"
                                 :style="{ color: getDiffColor(metric.proxy_time_ms, metric.direct_time_ms) }"
@@ -1239,7 +1526,9 @@ defineExpose({ saveConfig })
 
                     <!-- 推荐建议 -->
                     <div class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-600">
-                      <div class="text-sm">{{ speedTestResult.recommendation }}</div>
+                      <div class="text-sm">
+                        {{ speedTestResult.recommendation }}
+                      </div>
                     </div>
                   </div>
                 </n-collapse-transition>
@@ -1248,7 +1537,9 @@ defineExpose({ saveConfig })
 
             <div class="flex justify-end">
               <n-button type="primary" @click="saveConfig">
-                <template #icon><div class="i-carbon-save" /></template>
+                <template #icon>
+                  <div class="i-carbon-save" />
+                </template>
                 保存配置
               </n-button>
             </div>
@@ -1282,7 +1573,9 @@ defineExpose({ saveConfig })
                     placeholder="输入或选择排除模式 (node_modules)"
                   />
                   <template #feedback>
-                    <span class="form-feedback">支持 glob 通配符</span>
+                    <span class="form-feedback">
+                      支持 glob 通配符
+                    </span>
                   </template>
                 </n-form-item>
               </n-space>
@@ -1290,7 +1583,9 @@ defineExpose({ saveConfig })
 
             <div class="flex justify-end">
               <n-button type="primary" @click="saveConfig">
-                <template #icon><div class="i-carbon-save" /></template>
+                <template #icon>
+                  <div class="i-carbon-save" />
+                </template>
                 保存配置
               </n-button>
             </div>
@@ -1304,21 +1599,29 @@ defineExpose({ saveConfig })
           <n-space vertical size="large" class="tab-content">
             <ConfigSection title="工具状态" :no-card="true">
               <n-alert type="info" :bordered="false" class="info-alert">
-                <template #icon><div class="i-carbon-terminal" /></template>
+                <template #icon>
+                  <div class="i-carbon-terminal" />
+                </template>
                 日志路径: <code class="code-inline">~/.sanshu/log/acemcp.log</code>
               </n-alert>
 
               <n-space class="mt-3">
                 <n-button size="small" secondary @click="testConnection">
-                  <template #icon><div class="i-carbon-connection-signal" /></template>
+                  <template #icon>
+                    <div class="i-carbon-connection-signal" />
+                  </template>
                   测试连接
                 </n-button>
                 <n-button size="small" secondary @click="viewLogs">
-                  <template #icon><div class="i-carbon-document" /></template>
+                  <template #icon>
+                    <div class="i-carbon-document" />
+                  </template>
                   查看日志
                 </n-button>
                 <n-button size="small" secondary @click="clearCache">
-                  <template #icon><div class="i-carbon-clean" /></template>
+                  <template #icon>
+                    <div class="i-carbon-clean" />
+                  </template>
                   清除缓存
                 </n-button>
               </n-space>
@@ -1340,13 +1643,19 @@ defineExpose({ saveConfig })
                   :disabled="!debugProjectRoot || !debugQuery"
                   @click="runToolDebug"
                 >
-                  <template #icon><div class="i-carbon-play" /></template>
+                  <template #icon>
+                    <div class="i-carbon-play" />
+                  </template>
                   运行调试
                 </n-button>
 
                 <div v-if="debugResult" class="debug-result">
-                  <div class="result-label">结果输出:</div>
-                  <div class="result-content">{{ debugResult }}</div>
+                  <div class="result-label">
+                    结果输出:
+                  </div>
+                  <div class="result-content">
+                    {{ debugResult }}
+                  </div>
                 </div>
               </n-space>
             </ConfigSection>
@@ -1365,8 +1674,12 @@ defineExpose({ saveConfig })
                     <div class="i-carbon-automatic w-5 h-5 text-primary-500" />
                   </div>
                   <div>
-                    <div class="toggle-title">自动索引</div>
-                    <div class="toggle-desc">文件变更时自动更新索引</div>
+                    <div class="toggle-title">
+                      自动索引
+                    </div>
+                    <div class="toggle-desc">
+                      文件变更时自动更新索引
+                    </div>
                   </div>
                 </div>
                 <n-switch :value="autoIndexEnabled" @update:value="toggleAutoIndex" />
@@ -1400,7 +1713,9 @@ defineExpose({ saveConfig })
 
               <div class="flex justify-end mt-3">
                 <n-button type="primary" size="small" @click="saveConfig">
-                  <template #icon><div class="i-carbon-save" /></template>
+                  <template #icon>
+                    <div class="i-carbon-save" />
+                  </template>
                   保存配置
                 </n-button>
               </div>

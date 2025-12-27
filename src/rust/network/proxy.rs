@@ -106,6 +106,25 @@ impl ProxyDetector {
     /// - `true`: 代理可用
     /// - `false`: 代理不可用
     pub async fn check_proxy(proxy_info: &ProxyInfo) -> bool {
+        // 先检测本地端口是否存在（TCP 连接预检）
+        // 说明：端口可连通不代表一定是代理，但可以快速过滤掉“端口未监听”的情况，
+        // 避免直接进行 HTTP 探测导致额外等待（符合需求：先测端口存在，再进行 3 秒 HTTP 探测）。
+        let addr = format!("{}:{}", proxy_info.host, proxy_info.port);
+        let tcp_timeout = std::time::Duration::from_millis(300);
+        match tokio::time::timeout(tcp_timeout, tokio::net::TcpStream::connect(&addr)).await {
+            Ok(Ok(_stream)) => {
+                // 端口可达，继续进行 HTTP 204 探测
+            }
+            Ok(Err(e)) => {
+                log::debug!("❌ 代理 {}:{} TCP 端口不可达: {}", proxy_info.host, proxy_info.port, e);
+                return false;
+            }
+            Err(_) => {
+                log::debug!("❌ 代理 {}:{} TCP 端口连接超时", proxy_info.host, proxy_info.port);
+                return false;
+            }
+        }
+
         // 创建代理URL
         let proxy_url = proxy_info.to_url();
         
