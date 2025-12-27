@@ -370,14 +370,18 @@ function handleDeleteProject(projectRoot: string) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await invoke<string>('remove_acemcp_project_index', {
+        console.debug('[handleDeleteProject] 开始删除, normalizedPath=', normalizedPath)
+        const result = await invoke<string>('remove_acemcp_project_index', {
           projectRootPath: normalizedPath,
         })
+        console.debug('[handleDeleteProject] 删除命令执行结果:', result)
         message.success('已删除项目索引记录')
         // 从本地缓存中移除
         delete directoryExistsCache.value[normalizedPath]
         // 刷新列表
+        console.debug('[handleDeleteProject] 开始刷新列表')
         await loadAllData()
+        console.debug('[handleDeleteProject] 刷新完成, 项目数=', Object.keys(allProjects.value).length)
       }
       catch (err) {
         console.error('删除项目索引记录失败:', err)

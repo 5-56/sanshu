@@ -481,31 +481,50 @@ pub async fn remove_acemcp_project_index(project_root_path: String) -> Result<St
     use std::fs;
     use std::collections::HashMap;
 
-    // 规范化路径
-    let normalized_root = PathBuf::from(&project_root_path)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&project_root_path))
-        .to_string_lossy()
-        .replace('\\', "/");
+    // 规范化路径：不使用 canonicalize()，因为目录可能已被删除
+    // 仅进行字符串级别的规范化：去除扩展路径前缀，统一使用正斜杠
+    let mut normalized_root = project_root_path.clone();
+    // 去除 Windows 扩展长度路径前缀
+    if normalized_root.starts_with("\\\\?\\") {
+        normalized_root = normalized_root[4..].to_string();
+    } else if normalized_root.starts_with("//?/") {
+        normalized_root = normalized_root[4..].to_string();
+    }
+    // 统一使用正斜杠
+    normalized_root = normalized_root.replace('\\', "/");
 
-    log::info!("删除项目索引记录: {}", normalized_root);
+    log::info!("[remove_acemcp_project_index] 开始删除项目索引记录");
+    log::info!("[remove_acemcp_project_index] 原始路径: {}", project_root_path);
+    log::info!("[remove_acemcp_project_index] 规范化后路径: {}", normalized_root);
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let data_dir = home.join(".acemcp").join("data");
+
+    let mut projects_deleted = false;
+    let mut status_deleted = false;
 
     // 1. 从 projects.json 中删除项目的 blob 列表
     let projects_path = data_dir.join("projects.json");
     if projects_path.exists() {
         if let Ok(data) = fs::read_to_string(&projects_path) {
             if let Ok(mut projects) = serde_json::from_str::<HashMap<String, Vec<String>>>(&data) {
+                // 调试日志：输出现有的 key 列表
+                let existing_keys: Vec<&String> = projects.keys().collect();
+                log::info!("[remove_acemcp_project_index] projects.json 中现有项目: {:?}", existing_keys);
+                
                 if projects.remove(&normalized_root).is_some() {
                     if let Ok(new_data) = serde_json::to_string_pretty(&projects) {
                         let _ = fs::write(&projects_path, new_data);
-                        log::info!("已从 projects.json 删除项目: {}", normalized_root);
+                        log::info!("[remove_acemcp_project_index] ✓ 已从 projects.json 删除项目: {}", normalized_root);
+                        projects_deleted = true;
                     }
+                } else {
+                    log::warn!("[remove_acemcp_project_index] ✗ 在 projects.json 中未找到匹配的项目，规范化路径: {}", normalized_root);
                 }
             }
         }
+    } else {
+        log::warn!("[remove_acemcp_project_index] projects.json 文件不存在: {:?}", projects_path);
     }
 
     // 2. 从 projects_status.json 中删除项目状态
@@ -515,23 +534,40 @@ pub async fn remove_acemcp_project_index(project_root_path: String) -> Result<St
             if let Ok(mut status) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(projects) = status.get_mut("projects") {
                     if let Some(map) = projects.as_object_mut() {
+                        // 调试日志：输出现有的 key 列表
+                        let existing_keys: Vec<&String> = map.keys().collect();
+                        log::info!("[remove_acemcp_project_index] projects_status.json 中现有项目: {:?}", existing_keys);
+                        
                         if map.remove(&normalized_root).is_some() {
                             if let Ok(new_data) = serde_json::to_string_pretty(&status) {
                                 let _ = fs::write(&status_path, new_data);
-                                log::info!("已从 projects_status.json 删除项目: {}", normalized_root);
+                                log::info!("[remove_acemcp_project_index] ✓ 已从 projects_status.json 删除项目: {}", normalized_root);
+                                status_deleted = true;
                             }
+                        } else {
+                            log::warn!("[remove_acemcp_project_index] ✗ 在 projects_status.json 中未找到匹配的项目，规范化路径: {}", normalized_root);
                         }
                     }
                 }
             }
         }
+    } else {
+        log::warn!("[remove_acemcp_project_index] projects_status.json 文件不存在: {:?}", status_path);
     }
 
     // 3. 停止该项目的文件监听（如果有）
     let watcher_manager = super::watcher::get_watcher_manager();
     let _ = watcher_manager.stop_watching(&normalized_root);
 
-    Ok(format!("已删除项目索引记录: {}", normalized_root))
+    // 汇总删除结果
+    if projects_deleted || status_deleted {
+        log::info!("[remove_acemcp_project_index] 删除完成: projects.json={}, status.json={}", projects_deleted, status_deleted);
+        Ok(format!("已删除项目索引记录: {}", normalized_root))
+    } else {
+        log::warn!("[remove_acemcp_project_index] 未能从任何文件中删除项目，可能路径不匹配");
+        // 仍返回成功，因为可能项目本身就不存在（已被其他方式删除）
+        Ok(format!("项目索引记录可能已不存在: {}", normalized_root))
+    }
 }
 
 /// 检查指定目录是否存在
