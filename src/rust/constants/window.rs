@@ -7,10 +7,10 @@ pub const MIN_WIDTH: f64 = 600.0;
 pub const MIN_HEIGHT: f64 = 400.0;
 
 /// 窗口最大宽度 (px)
-pub const MAX_WIDTH: f64 = 1500.0;
+pub const MAX_WIDTH: f64 = 4096.0;
 
 /// 窗口最大高度 (px)
-pub const MAX_HEIGHT: f64 = 1000.0;
+pub const MAX_HEIGHT: f64 = 4096.0;
 
 /// 窗口默认宽度 (px)
 pub const DEFAULT_WIDTH: f64 = 600.0;
