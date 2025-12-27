@@ -27,8 +27,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<Emits>()
 
-// 抽屉显示状态，使用 v-model:show 双向绑定父组件
-const drawerVisible = computed({
+// 弹窗显示状态，使用 v-model:show 双向绑定父组件
+const modalVisible = computed({
   get: () => props.show,
   set: (val: boolean) => emit('update:show', val),
 })
@@ -43,6 +43,12 @@ const displayPath = computed(() => {
     p = p.slice(4)
   // 统一使用正斜杠
   return p.replace(/\\/g, '/')
+})
+
+// 提取项目名称
+const projectName = computed(() => {
+  const parts = displayPath.value.split('/')
+  return parts[parts.length - 1] || displayPath.value
 })
 
 // 文件索引状态数据
@@ -252,10 +258,10 @@ function aggregateNode(node: IndexTreeNode): { total: number, indexed: number } 
       suffix = '未索引'
     }
     else if (indexed === total) {
-      suffix = `全部已索引 (${indexed})`
+      suffix = `${indexed}`
     }
     else {
-      suffix = `${indexed}/${total} 已索引`
+      suffix = `${indexed}/${total}`
     }
 
     node.label = `${baseLabel} · ${suffix}`
@@ -289,7 +295,7 @@ async function fetchFilesStatus() {
   }
 }
 
-// 当抽屉打开且有项目路径时，自动加载一次文件状态
+// 当弹窗打开且有项目路径时，自动加载一次文件状态
 watch(
   () => props.show,
   (visible) => {
@@ -311,7 +317,7 @@ function renderPrefix({ option }: { option: TreeOption }) {
   const iconConfig = getFileIconConfig(node.fileName || node.label, node.isDirectory || false)
 
   return h('div', {
-    class: `${iconConfig.icon} w-4 h-4 flex-shrink-0 transition-colors duration-200`,
+    class: `${iconConfig.icon} w-3.5 h-3.5 flex-shrink-0`,
     style: { color: iconConfig.color },
   })
 }
@@ -325,17 +331,11 @@ function renderLabel({ option }: { option: TreeOption }) {
   // 目录节点：显示目录名和统计信息
   if (isDirectory) {
     const stats = node.label.includes(' · ') ? node.label.split(' · ')[1] : ''
-    return h('div', { class: 'flex items-center gap-2 py-0.5' }, [
-      h('span', { class: 'text-white font-medium truncate' }, fileName),
+    return h('div', { class: 'flex items-center gap-1.5' }, [
+      h('span', { class: 'tree-node-label truncate' }, fileName),
       stats
         ? h('span', {
-            class: `text-[10px] px-1.5 py-0.5 rounded-full ${
-              stats.includes('全部已索引')
-                ? 'bg-green-500/20 text-green-400'
-                : stats.includes('未索引')
-                  ? 'bg-orange-500/20 text-orange-400'
-                  : 'bg-blue-500/20 text-blue-400'
-            }`,
+            class: 'tree-node-badge tree-node-badge--stats',
           }, stats)
         : null,
     ])
@@ -343,203 +343,538 @@ function renderLabel({ option }: { option: TreeOption }) {
 
   // 文件节点：显示文件名和状态标签
   const status = node.status
-  return h('div', { class: 'flex items-center gap-2 py-0.5' }, [
-    h('span', { class: 'text-gray-300 truncate' }, fileName),
+  return h('div', { class: 'flex items-center gap-1.5' }, [
+    h('span', { class: 'tree-node-label tree-node-label--file truncate' }, fileName),
     h('span', {
-      class: `text-[10px] px-1.5 py-0.5 rounded-full ${
+      class: `tree-node-badge ${
         status === 'indexed'
-          ? 'bg-green-500/20 text-green-400'
-          : 'bg-orange-500/20 text-orange-400'
+          ? 'tree-node-badge--indexed'
+          : 'tree-node-badge--pending'
       }`,
-    }, status === 'indexed' ? '已索引' : '未同步'),
+    }, status === 'indexed' ? '✓' : '○'),
   ])
+}
+
+// 复制路径到剪贴板
+function handleCopyPath() {
+  if (displayPath.value) {
+    navigator.clipboard.writeText(displayPath.value)
+    message.success('路径已复制')
+  }
 }
 </script>
 
 <template>
-  <n-drawer
-    v-model:show="drawerVisible"
-    placement="right"
-    :width="420"
-    :trap-focus="false"
+  <n-modal
+    v-model:show="modalVisible"
+    preset="card"
+    class="index-status-modal"
+    :style="{ width: '680px', maxHeight: '70vh' }"
+    :bordered="false"
+    :closable="true"
+    :mask-closable="true"
+    :segmented="{ content: true, footer: 'soft' }"
   >
-    <n-drawer-content>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <div :class="statusIcon" class="w-4 h-4" />
-          <span class="text-sm font-medium">代码索引状态</span>
-        </div>
-      </template>
+    <!-- 头部标题 -->
+    <template #header>
+      <div class="modal-header">
+        <div class="header-icon" :class="statusIcon" />
+        <span class="header-title">代码索引状态</span>
+        <n-tag
+          size="small"
+          :type="projectStatus?.status === 'synced' ? 'success' : projectStatus?.status === 'failed' ? 'error' : 'info'"
+        >
+          {{ statusSummary }}
+        </n-tag>
+      </div>
+    </template>
 
-      <div class="space-y-4 text-xs">
-        <!-- 项目基础信息 -->
-        <div class="space-y-1">
-          <div class="flex items-center justify-between">
-            <span class="text-gray-500">项目路径</span>
-            <span class="ml-2 truncate max-w-[260px]" :title="displayPath">
-              {{ displayPath || '未提供' }}
-            </span>
+    <!-- 主内容区域：左右双栏布局 -->
+    <div class="modal-content">
+      <!-- 左侧：统计信息 -->
+      <div class="stats-panel">
+        <!-- 项目信息卡片 -->
+        <div class="info-card">
+          <div class="info-card__header">
+            <div class="i-carbon-folder text-primary-500" />
+            <span class="info-card__title">{{ projectName }}</span>
           </div>
-          <div class="flex items-center justify-between">
-            <span class="text-gray-500">整体状态</span>
-            <span class="ml-2 font-medium">
-              {{ statusSummary }}
-            </span>
-          </div>
-          <div v-if="projectStatus" class="flex items-center justify-between">
-            <span class="text-gray-500">进度</span>
-            <span class="ml-2">
-              {{ projectStatus.progress }}%
-              <span class="ml-1 text-gray-500">
-                ({{ projectStatus.indexed_files }}/{{ projectStatus.total_files }})
-              </span>
-            </span>
+          <div
+            class="info-card__path"
+            :title="displayPath"
+            @click="handleCopyPath"
+          >
+            {{ displayPath || '未指定路径' }}
           </div>
         </div>
 
-        <!-- 总体进度条 -->
-        <div v-if="projectStatus">
+        <!-- 进度展示 -->
+        <div v-if="projectStatus" class="progress-card">
+          <div class="progress-card__header">
+            <span class="progress-card__label">索引进度</span>
+            <span class="progress-card__value">{{ projectStatus.progress }}%</span>
+          </div>
           <n-progress
             type="line"
             :percentage="projectStatus.progress"
             :height="6"
             :border-radius="3"
             :show-indicator="false"
-            :status="projectStatus.status === 'failed' ? 'error' : 'info'"
+            :status="projectStatus.status === 'failed' ? 'error' : projectStatus.progress === 100 ? 'success' : 'info'"
+            processing
           />
         </div>
 
-        <!-- 项目结构树 -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <span class="text-xs font-medium text-gray-500">项目结构</span>
-              <!-- 仅显示未完全同步文件开关 -->
-              <div class="flex items-center gap-1 text-[11px] text-gray-500">
-                <n-switch
-                  v-model:value="showOnlyPending"
-                  size="small"
-                />
-                <span>仅显示未完全同步</span>
-              </div>
+        <!-- 文件统计 -->
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="i-carbon-document stat-item__icon" />
+            <div class="stat-item__content">
+              <span class="stat-item__value">{{ projectStatus?.total_files ?? 0 }}</span>
+              <span class="stat-item__label">总文件</span>
             </div>
-            <n-button
-              text
-              size="tiny"
-              :loading="loadingFiles"
-              @click="fetchFilesStatus"
-            >
-              <template #icon>
-                <div class="i-carbon-renew w-3 h-3" />
-              </template>
-              刷新
-            </n-button>
           </div>
-
-          <div class="tree-container min-h-[120px] max-h-[280px] overflow-y-auto pr-1">
-            <!-- 骨架屏加载状态 -->
-            <div v-if="loadingFiles" class="tree-skeleton space-y-2 py-2">
-              <div v-for="i in 5" :key="i" class="skeleton-item flex items-center gap-2" :style="{ paddingLeft: `${(i % 3) * 16}px` }">
-                <div class="skeleton-icon w-4 h-4 rounded" />
-                <div class="skeleton-text h-4 rounded" :style="{ width: `${60 + Math.random() * 80}px` }" />
-                <div v-if="i % 2 === 0" class="skeleton-badge h-4 w-12 rounded-full" />
-              </div>
+          <div class="stat-item stat-item--success">
+            <div class="i-carbon-checkmark-filled stat-item__icon" />
+            <div class="stat-item__content">
+              <span class="stat-item__value">{{ projectStatus?.indexed_files ?? 0 }}</span>
+              <span class="stat-item__label">已索引</span>
             </div>
-
-            <!-- 错误状态 -->
-            <div v-else-if="filesError" class="flex items-center gap-2 text-red-400 py-3 px-2 bg-red-500/10 rounded-lg">
-              <div class="i-carbon-warning-alt w-4 h-4 flex-shrink-0" />
-              <span class="text-xs">{{ filesError }}</span>
+          </div>
+          <div v-if="(projectStatus?.pending_files ?? 0) > 0" class="stat-item stat-item--info">
+            <div class="i-carbon-time stat-item__icon" />
+            <div class="stat-item__content">
+              <span class="stat-item__value">{{ projectStatus?.pending_files ?? 0 }}</span>
+              <span class="stat-item__label">待处理</span>
             </div>
-
-            <!-- 空状态 -->
-            <div v-else-if="!treeData.length" class="flex flex-col items-center justify-center py-6 text-gray-500">
-              <div class="i-carbon-folder-off w-8 h-8 mb-2 opacity-50" />
-              <span class="text-xs text-center">暂无可索引文件<br>请确认扩展名和排除规则配置</span>
-            </div>
-
-            <!-- 项目结构树 -->
-            <div v-else class="custom-tree">
-              <n-tree
-                :data="treeData"
-                :block-line="true"
-                :selectable="false"
-                :expand-on-click="true"
-                :render-prefix="renderPrefix"
-                :render-label="renderLabel"
-                :default-expand-all="false"
-                :animated="true"
-              />
+          </div>
+          <div v-if="(projectStatus?.failed_files ?? 0) > 0" class="stat-item stat-item--error">
+            <div class="i-carbon-warning-filled stat-item__icon" />
+            <div class="stat-item__content">
+              <span class="stat-item__value">{{ projectStatus?.failed_files ?? 0 }}</span>
+              <span class="stat-item__label">失败</span>
             </div>
           </div>
         </div>
 
-        <!-- 手动重新同步控制 -->
-        <div class="pt-2 border-t border-gray-200 flex items-center justify-between gap-3">
-          <div class="text-[11px] text-gray-500 leading-snug space-y-0.5">
-            <div>重新同步会在后台执行，不会阻塞当前对话。</div>
-            <div v-if="projectStatus?.last_success_time">
-              上次成功：{{ projectStatus.last_success_time }}
-            </div>
-            <div v-if="projectStatus?.failed_files">
-              失败文件数：<span class="text-red-500">{{ projectStatus.failed_files }}</span>
-            </div>
-            <div v-if="projectStatus?.last_error" class="text-red-500">
-              最近错误：{{ projectStatus.last_error }}
-            </div>
-          </div>
-          <n-button
-            type="primary"
-            size="small"
-            :loading="resyncLoading || isIndexing"
-            :disabled="resyncLoading || isIndexing || !projectRoot"
-            strong
-            @click="handleResyncClick"
-          >
-            <template #icon>
-              <div class="i-carbon-renew w-4 h-4" />
-            </template>
-            {{ isIndexing ? '索引中...' : '重新同步' }}
-          </n-button>
+        <!-- 时间信息 -->
+        <div v-if="projectStatus?.last_success_time" class="time-info">
+          <div class="i-carbon-time" />
+          <span>上次成功：{{ projectStatus.last_success_time }}</span>
+        </div>
+
+        <!-- 错误信息 -->
+        <div v-if="projectStatus?.last_error" class="error-info">
+          <div class="i-carbon-warning-alt" />
+          <span>{{ projectStatus.last_error }}</span>
         </div>
       </div>
-    </n-drawer-content>
-  </n-drawer>
+
+      <!-- 右侧：文件树 -->
+      <div class="tree-panel">
+        <!-- 工具栏 -->
+        <div class="tree-toolbar">
+          <div class="tree-toolbar__left">
+            <span class="tree-toolbar__title">项目结构</span>
+            <n-switch
+              v-model:value="showOnlyPending"
+              size="small"
+            />
+            <span class="tree-toolbar__filter-label">仅未同步</span>
+          </div>
+          <n-button
+            text
+            size="tiny"
+            :loading="loadingFiles"
+            @click="fetchFilesStatus"
+          >
+            <template #icon>
+              <div class="i-carbon-renew w-3.5 h-3.5" />
+            </template>
+          </n-button>
+        </div>
+
+        <!-- 树容器 -->
+        <div class="tree-container">
+          <!-- 骨架屏加载状态 -->
+          <div v-if="loadingFiles" class="tree-skeleton">
+            <div v-for="i in 8" :key="i" class="skeleton-row" :style="{ paddingLeft: `${(i % 4) * 12}px` }">
+              <div class="skeleton-icon" />
+              <div class="skeleton-text" :style="{ width: `${50 + Math.random() * 80}px` }" />
+            </div>
+          </div>
+
+          <!-- 错误状态 -->
+          <div v-else-if="filesError" class="tree-error">
+            <div class="i-carbon-warning-alt" />
+            <span>{{ filesError }}</span>
+          </div>
+
+          <!-- 空状态 -->
+          <div v-else-if="!treeData.length" class="tree-empty">
+            <div class="i-carbon-folder-off" />
+            <span>暂无可索引文件</span>
+            <span class="tree-empty__hint">请确认扩展名和排除规则配置</span>
+          </div>
+
+          <!-- 项目结构树 -->
+          <div v-else class="tree-wrapper">
+            <n-tree
+              :data="treeData"
+              :block-line="true"
+              :selectable="false"
+              :expand-on-click="true"
+              :render-prefix="renderPrefix"
+              :render-label="renderLabel"
+              :default-expand-all="false"
+              :animated="true"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部操作区 -->
+    <template #footer>
+      <div class="modal-footer">
+        <div class="footer-hint">
+          重新同步会在后台执行，不会阻塞当前对话
+        </div>
+        <n-button
+          type="primary"
+          size="small"
+          :loading="resyncLoading || isIndexing"
+          :disabled="resyncLoading || isIndexing || !projectRoot"
+          @click="handleResyncClick"
+        >
+          <template #icon>
+            <div class="i-carbon-renew" />
+          </template>
+          {{ isIndexing ? '索引中...' : '重新同步' }}
+        </n-button>
+      </div>
+    </template>
+  </n-modal>
 </template>
 
 <style scoped>
-/* ==================== 树形容器样式 ==================== */
-.tree-container {
+/* ==================== 弹窗整体样式 ==================== */
+.index-status-modal :deep(.n-card) {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.index-status-modal :deep(.n-card__content) {
+  padding: 0 !important;
+}
+
+/* ==================== 头部样式 ==================== */
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-on-surface, #111827);
+}
+
+:root.dark .header-title {
+  color: #e5e7eb;
+}
+
+/* ==================== 主内容区域 ==================== */
+.modal-content {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  min-height: 280px;
+  max-height: calc(70vh - 120px);
+}
+
+/* ==================== 左侧统计面板 ==================== */
+.stats-panel {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 项目信息卡片 */
+.info-card {
+  padding: 12px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--color-container, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.15));
+}
+
+:root.dark .info-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.info-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.info-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-on-surface, #111827);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root.dark .info-card__title {
+  color: #e5e7eb;
+}
+
+.info-card__path {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--color-on-surface-secondary, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.info-card__path:hover {
+  color: var(--color-primary, #14b8a6);
+}
+
+:root.dark .info-card__path {
+  color: #9ca3af;
+}
+
+/* 进度卡片 */
+.progress-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-container, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.15));
+}
+
+:root.dark .progress-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.progress-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progress-card__label {
+  font-size: 11px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .progress-card__label {
+  color: #9ca3af;
+}
+
+.progress-card__value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary, #14b8a6);
+}
+
+/* 统计网格 */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-container, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.15));
+}
+
+:root.dark .stat-item {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.stat-item__icon {
+  width: 14px;
+  height: 14px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .stat-item__icon {
+  color: #9ca3af;
+}
+
+.stat-item--success .stat-item__icon { color: #22c55e; }
+.stat-item--info .stat-item__icon { color: #3b82f6; }
+.stat-item--error .stat-item__icon { color: #ef4444; }
+
+.stat-item__content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stat-item__value {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-on-surface, #111827);
+}
+
+:root.dark .stat-item__value {
+  color: #e5e7eb;
+}
+
+.stat-item__label {
+  font-size: 9px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .stat-item__label {
+  color: #9ca3af;
+}
+
+/* 时间信息 */
+.time-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .time-info {
+  color: #9ca3af;
+}
+
+/* 错误信息 */
+.error-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   padding: 8px;
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  font-size: 10px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
-/* ==================== 骨架屏样式 ==================== */
-.tree-skeleton .skeleton-item {
-  animation: skeleton-fade 1.5s ease-in-out infinite;
+/* ==================== 右侧文件树面板 ==================== */
+.tree-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  background: var(--color-container, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.15));
+  overflow: hidden;
 }
 
-.tree-skeleton .skeleton-item:nth-child(2) { animation-delay: 0.1s; }
-.tree-skeleton .skeleton-item:nth-child(3) { animation-delay: 0.2s; }
-.tree-skeleton .skeleton-item:nth-child(4) { animation-delay: 0.3s; }
-.tree-skeleton .skeleton-item:nth-child(5) { animation-delay: 0.4s; }
+:root.dark .tree-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 工具栏 */
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.15));
+  background: var(--color-container, rgba(0, 0, 0, 0.02));
+}
+
+:root.dark .tree-toolbar {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tree-toolbar__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tree-toolbar__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .tree-toolbar__title {
+  color: #9ca3af;
+}
+
+.tree-toolbar__filter-label {
+  font-size: 10px;
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .tree-toolbar__filter-label {
+  color: #9ca3af;
+}
+
+/* 树容器 */
+.tree-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* 骨架屏 */
+.tree-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
 
 .skeleton-icon {
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.05) 75%);
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(128, 128, 128, 0.1) 25%, rgba(128, 128, 128, 0.2) 50%, rgba(128, 128, 128, 0.1) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
 }
 
 .skeleton-text {
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.08) 25%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.08) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
-}
-
-.skeleton-badge {
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.05) 75%);
+  height: 12px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(128, 128, 128, 0.1) 25%, rgba(128, 128, 128, 0.2) 50%, rgba(128, 128, 128, 0.1) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
 }
@@ -549,120 +884,131 @@ function renderLabel({ option }: { option: TreeOption }) {
   100% { background-position: -200% 0; }
 }
 
-@keyframes skeleton-fade {
+@keyframes skeleton-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
 
-/* ==================== 自定义树样式 ==================== */
-.custom-tree :deep(.n-tree) {
-  --n-node-text-color: var(--color-on-surface, #e5e7eb);
-  --n-node-text-color-disabled: var(--color-on-surface-muted, #9ca3af);
-}
-
-/* 树节点基础样式 */
-.custom-tree :deep(.n-tree-node) {
-  border-radius: 6px;
-  margin-bottom: 2px;
-  transition: all 0.2s ease;
-}
-
-/* 树节点悬停效果 */
-.custom-tree :deep(.n-tree-node:hover) {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-/* 树节点内容区域 */
-.custom-tree :deep(.n-tree-node-content) {
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-/* 展开/折叠图标样式 */
-.custom-tree :deep(.n-tree-node-switcher) {
-  width: 20px;
-  height: 20px;
+/* 错误状态 */
+.tree-error {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: #ef4444;
+  font-size: 12px;
+}
+
+/* 空状态 */
+.tree-empty {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease;
+  padding: 32px 16px;
+  color: var(--color-on-surface-secondary, #6b7280);
 }
 
-/* 展开状态的图标旋转 */
-.custom-tree :deep(.n-tree-node-switcher--expanded) {
-  transform: rotate(90deg);
+:root.dark .tree-empty {
+  color: #9ca3af;
 }
 
-/* 树形引导线 - IntelliJ IDEA 风格 */
-.custom-tree :deep(.n-tree-node-indent) {
-  position: relative;
+.tree-empty > div:first-child {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
 }
 
-.custom-tree :deep(.n-tree-node-indent::before) {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(255, 255, 255, 0.1) 10%,
-    rgba(255, 255, 255, 0.1) 90%,
-    transparent 100%
-  );
+.tree-empty > span:first-of-type {
+  font-size: 12px;
+  font-weight: 500;
 }
 
-/* 节点前缀图标容器 */
-.custom-tree :deep(.n-tree-node-content__prefix) {
-  margin-right: 8px;
+.tree-empty__hint {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+/* 树包装器 */
+.tree-wrapper {
+  font-size: 12px;
+}
+
+/* 树节点样式 */
+.tree-wrapper :deep(.n-tree-node) {
+  border-radius: 4px;
+  margin-bottom: 1px;
+  padding: 0 4px;
+}
+
+.tree-wrapper :deep(.n-tree-node:hover) {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.tree-wrapper :deep(.n-tree-node-content) {
+  padding: 2px 4px;
+}
+
+.tree-wrapper :deep(.n-tree-node-switcher) {
+  width: 16px;
+  height: 16px;
+}
+
+/* 节点标签 */
+.tree-node-label {
+  font-size: 11px;
+  color: var(--color-on-surface, #111827);
+}
+
+:root.dark .tree-node-label {
+  color: #e5e7eb;
+}
+
+.tree-node-label--file {
+  color: var(--color-on-surface-secondary, #6b7280);
+}
+
+:root.dark .tree-node-label--file {
+  color: #d1d5db;
+}
+
+/* 节点徽章 */
+.tree-node-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.tree-node-badge--stats {
+  background: rgba(20, 184, 166, 0.15);
+  color: #14b8a6;
+}
+
+.tree-node-badge--indexed {
+  color: #22c55e;
+}
+
+.tree-node-badge--pending {
+  color: #f59e0b;
+}
+
+/* ==================== 底部操作栏 ==================== */
+.modal-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-/* 节点标签容器 */
-.custom-tree :deep(.n-tree-node-content__text) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+.footer-hint {
+  font-size: 11px;
+  color: var(--color-on-surface-secondary, #6b7280);
 }
 
-/* 选中状态样式（虽然禁用了选择，但保留样式以备后用） */
-.custom-tree :deep(.n-tree-node--selected) {
-  background: rgba(20, 184, 166, 0.15);
-  border-left: 2px solid #14b8a6;
-}
-
-/* 展开动画 */
-.custom-tree :deep(.n-tree-node-children) {
-  overflow: hidden;
-}
-
-/* 浅色主题适配 */
-:root.light .tree-container {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-
-:root.light .skeleton-icon,
-:root.light .skeleton-text,
-:root.light .skeleton-badge {
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.05) 25%, rgba(0, 0, 0, 0.1) 50%, rgba(0, 0, 0, 0.05) 75%);
-  background-size: 200% 100%;
-}
-
-:root.light .custom-tree :deep(.n-tree-node:hover) {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-:root.light .custom-tree :deep(.n-tree-node-indent::before) {
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.1) 10%,
-    rgba(0, 0, 0, 0.1) 90%,
-    transparent 100%
-  );
+:root.dark .footer-hint {
+  color: #9ca3af;
 }
 </style>
