@@ -536,9 +536,26 @@ pub fn get_auto_index_enabled() -> Result<bool, String> {
 
 /// 设置全局自动索引开关
 #[tauri::command]
-pub fn set_auto_index_enabled(enabled: bool) -> Result<(), String> {
+pub async fn set_auto_index_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     let watcher_manager = super::watcher::get_watcher_manager();
     watcher_manager.set_auto_index_enabled(enabled);
+
+    // 持久化到配置，确保跨重启生效
+    {
+        let mut config = state
+            .config
+            .lock()
+            .map_err(|e| format!("获取配置失败: {}", e))?;
+        config.mcp_config.acemcp_auto_index_enabled = Some(enabled);
+    }
+
+    save_config(&state, &app)
+        .await
+        .map_err(|e| format!("保存配置失败: {}", e))?;
     Ok(())
 }
 
@@ -912,6 +929,24 @@ pub async fn test_acemcp_proxy_speed(
             }
         }
     }
+
+    // 构建测速 HTTP Client（复用连接池 + connect_timeout）
+    // 说明：测速过程中会多次请求，如果每次都 build client 会有额外开销
+    let proxy_client: Option<reqwest::Client> = if test_proxy {
+        if let Some(ref ps) = proxy_settings {
+            Some(build_speed_test_client(Some(ps), 120)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let direct_client: Option<reqwest::Client> = if test_direct {
+        Some(build_speed_test_client(None, 120)?)
+    } else {
+        None
+    };
     
     // 1. Ping 测试 - 测量到 ACE 服务器的网络延迟
     let health_url = format!("{}/health", base_url);
@@ -926,13 +961,13 @@ pub async fn test_acemcp_proxy_speed(
     
     // 代理模式 Ping
     if test_proxy {
-        if let Some(ref ps) = proxy_settings {
+        if let Some(ref client) = proxy_client {
             let rounds = 3usize;
             let mut ok: Vec<u64> = Vec::with_capacity(rounds);
             let mut last_err: Option<String> = None;
 
             for _ in 0..rounds {
-                match ping_endpoint(&health_url, &token, Some(ps)).await {
+                match ping_endpoint(client, &health_url, &token).await {
                     Ok(ms) => ok.push(ms),
                     Err(e) => last_err = Some(e),
                 }
@@ -957,17 +992,21 @@ pub async fn test_acemcp_proxy_speed(
                     );
                 }
             }
+        } else {
+            ping_metric.success = false;
+            append_error(&mut ping_metric.error, "代理 Ping 跳过：代理 client 未初始化".to_string());
         }
     }
     
     // 直连模式 Ping
     if test_direct {
+        let direct_client = direct_client.as_ref().ok_or_else(|| "直连 Ping 跳过：直连 client 未初始化".to_string())?;
         let rounds = 3usize;
         let mut ok: Vec<u64> = Vec::with_capacity(rounds);
         let mut last_err: Option<String> = None;
 
         for _ in 0..rounds {
-            match ping_endpoint(&health_url, &token, None).await {
+            match ping_endpoint(direct_client, &health_url, &token).await {
                 Ok(ms) => ok.push(ms),
                 Err(e) => last_err = Some(e),
             }
@@ -1043,20 +1082,24 @@ pub async fn test_acemcp_proxy_speed(
 
         // 代理模式搜索
         if test_proxy {
-            if let Some(ref ps) = proxy_settings {
-                match search_endpoint(&search_url, &token, &search_payload, Some(ps)).await {
+            if let Some(ref client) = proxy_client {
+                match search_endpoint(client, &search_url, &token, &search_payload).await {
                     Ok(ms) => search_metric.proxy_time_ms = Some(ms),
                     Err(e) => {
                         search_metric.success = false;
                         search_metric.error = Some(format!("代理搜索失败: {}", e));
                     }
                 }
+            } else {
+                search_metric.success = false;
+                search_metric.error = Some("代理搜索跳过：代理 client 未初始化".to_string());
             }
         }
 
         // 直连模式搜索
         if test_direct {
-            match search_endpoint(&search_url, &token, &search_payload, None).await {
+            let direct_client = direct_client.as_ref().ok_or_else(|| "直连搜索跳过：直连 client 未初始化".to_string())?;
+            match search_endpoint(direct_client, &search_url, &token, &search_payload).await {
                 Ok(ms) => search_metric.direct_time_ms = Some(ms),
                 Err(e) => {
                     if search_metric.error.is_none() {
@@ -1099,19 +1142,23 @@ pub async fn test_acemcp_proxy_speed(
                     );
 
                     if test_proxy {
-                        if let Some(ref ps) = proxy_settings {
-                            match upload_blobs_batch(&upload_url, &token, &blobs, Some(ps), 120).await {
+                        if let Some(ref client) = proxy_client {
+                            match upload_blobs_batch(client, &upload_url, &token, &blobs, 120).await {
                                 Ok(ms) => upload_single_metric.proxy_time_ms = Some(ms),
                                 Err(e) => {
                                     upload_single_metric.success = false;
                                     append_error(&mut upload_single_metric.error, format!("代理上传失败: {}", e));
                                 }
                             }
+                        } else {
+                            upload_single_metric.success = false;
+                            append_error(&mut upload_single_metric.error, "代理上传跳过：代理 client 未初始化".to_string());
                         }
                     }
 
                     if test_direct {
-                        match upload_blobs_batch(&upload_url, &token, &blobs, None, 120).await {
+                        let direct_client = direct_client.as_ref().ok_or_else(|| "直连上传跳过：直连 client 未初始化".to_string())?;
+                        match upload_blobs_batch(direct_client, &upload_url, &token, &blobs, 120).await {
                             Ok(ms) => upload_single_metric.direct_time_ms = Some(ms),
                             Err(e) => {
                                 upload_single_metric.success = false;
@@ -1149,8 +1196,9 @@ pub async fn test_acemcp_proxy_speed(
         let mut detail: Option<ProjectUploadResult> = None;
 
         if test_proxy {
-            if let Some(ref ps) = proxy_settings {
+            if let Some(ref client) = proxy_client {
                 match upload_project_for_speed_test(
+                    client,
                     &base_url,
                     &token,
                     &project_root_path,
@@ -1158,7 +1206,6 @@ pub async fn test_acemcp_proxy_speed(
                     batch_size,
                     max_lines_per_blob,
                     project_upload_max_files_limit,
-                    Some(ps),
                 )
                 .await
                 {
@@ -1173,11 +1220,16 @@ pub async fn test_acemcp_proxy_speed(
                         append_error(&mut upload_project_metric.error, format!("代理项目上传失败: {}", e));
                     }
                 }
+            } else {
+                upload_project_metric.success = false;
+                append_error(&mut upload_project_metric.error, "代理项目上传跳过：代理 client 未初始化".to_string());
             }
         }
 
         if test_direct {
+            let direct_client = direct_client.as_ref().ok_or_else(|| "直连项目上传跳过：直连 client 未初始化".to_string())?;
             match upload_project_for_speed_test(
+                direct_client,
                 &base_url,
                 &token,
                 &project_root_path,
@@ -1185,7 +1237,6 @@ pub async fn test_acemcp_proxy_speed(
                 batch_size,
                 max_lines_per_blob,
                 project_upload_max_files_limit,
-                None,
             )
             .await
             {
@@ -1393,32 +1444,40 @@ fn split_content_for_speed_test(path: &str, content: &str, max_lines: usize) -> 
     blobs
 }
 
-/// 上传一批 blobs，返回耗时（毫秒）
-async fn upload_blobs_batch(
-    upload_url: &str,
-    token: &str,
-    blobs: &[UploadBlob],
-    proxy: Option<&ProxySettings>,
-    timeout_secs: u64,
-) -> Result<u64, String> {
-    if blobs.is_empty() {
-        return Ok(0);
-    }
-
+/// 构建测速用 HTTP Client（支持代理 + connect_timeout）
+/// 说明：测速过程中会多次请求，如果每次都 build client 会有额外开销
+fn build_speed_test_client(proxy: Option<&ProxySettings>, timeout_secs: u64) -> Result<reqwest::Client, String> {
     let mut client_builder = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(crate::constants::network::CONNECTION_TIMEOUT_MS))
         .timeout(std::time::Duration::from_secs(timeout_secs));
 
     if let Some(p) = proxy {
         client_builder = client_builder.proxy(p.to_reqwest_proxy()?);
     }
 
-    let client = client_builder.build().map_err(|e| format!("构建客户端失败: {}", e))?;
+    client_builder
+        .build()
+        .map_err(|e| format!("构建客户端失败: {}", e))
+}
+
+/// 上传一批 blobs，返回耗时（毫秒）
+async fn upload_blobs_batch(
+    client: &reqwest::Client,
+    upload_url: &str,
+    token: &str,
+    blobs: &[UploadBlob],
+    timeout_secs: u64,
+) -> Result<u64, String> {
+    if blobs.is_empty() {
+        return Ok(0);
+    }
 
     let payload = serde_json::json!({ "blobs": blobs });
     let start = std::time::Instant::now();
 
     let resp = client
         .post(upload_url)
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .json(&payload)
@@ -1481,6 +1540,7 @@ struct ProjectUploadResult {
 /// 项目上传测速：按文件列表读取内容并批量上传 blobs
 /// - `max_files`: Some(n) 表示最多测试 n 个文件（采样），None 表示全量
 async fn upload_project_for_speed_test(
+    client: &reqwest::Client,
     base_url: &str,
     token: &str,
     project_root_path: &str,
@@ -1488,7 +1548,6 @@ async fn upload_project_for_speed_test(
     batch_size: usize,
     max_lines_per_blob: usize,
     max_files: Option<usize>,
-    proxy: Option<&ProxySettings>,
 ) -> Result<ProjectUploadResult, String> {
     use std::path::PathBuf;
 
@@ -1537,14 +1596,14 @@ async fn upload_project_for_speed_test(
             batch.push(b);
             if batch.len() >= batch_size {
                 // 上传一批
-                let _ = upload_blobs_batch(&upload_url, token, &batch, proxy, 120).await?;
+                let _ = upload_blobs_batch(client, &upload_url, token, &batch, 120).await?;
                 batch.clear();
             }
         }
     }
 
     if !batch.is_empty() {
-        let _ = upload_blobs_batch(&upload_url, token, &batch, proxy, 120).await?;
+        let _ = upload_blobs_batch(client, &upload_url, token, &batch, 120).await?;
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -1580,19 +1639,11 @@ fn build_single_file_blobs_for_speed_test(
 }
 
 /// Ping 测试辅助函数
-async fn ping_endpoint(url: &str, token: &str, proxy: Option<&ProxySettings>) -> Result<u64, String> {
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10));
-    
-    if let Some(p) = proxy {
-        client_builder = client_builder.proxy(p.to_reqwest_proxy()?);
-    }
-    
-    let client = client_builder.build().map_err(|e| format!("构建客户端失败: {}", e))?;
-    
+async fn ping_endpoint(client: &reqwest::Client, url: &str, token: &str) -> Result<u64, String> {
     let start = std::time::Instant::now();
     let response = client
         .head(url)
+        .timeout(std::time::Duration::from_secs(10))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
         .send()
         .await
@@ -1609,19 +1660,11 @@ async fn ping_endpoint(url: &str, token: &str, proxy: Option<&ProxySettings>) ->
 }
 
 /// 搜索测试辅助函数
-async fn search_endpoint(url: &str, token: &str, payload: &serde_json::Value, proxy: Option<&ProxySettings>) -> Result<u64, String> {
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30));
-    
-    if let Some(p) = proxy {
-        client_builder = client_builder.proxy(p.to_reqwest_proxy()?);
-    }
-    
-    let client = client_builder.build().map_err(|e| format!("构建客户端失败: {}", e))?;
-    
+async fn search_endpoint(client: &reqwest::Client, url: &str, token: &str, payload: &serde_json::Value) -> Result<u64, String> {
     let start = std::time::Instant::now();
     let response = client
         .post(url)
+        .timeout(std::time::Duration::from_secs(30))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .json(payload)

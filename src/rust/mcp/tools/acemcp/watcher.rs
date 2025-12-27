@@ -5,7 +5,7 @@ use notify_debouncer_full::{
     DebounceEventResult, Debouncer, FileIdMap,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -27,9 +27,17 @@ pub struct WatcherManager {
 impl WatcherManager {
     /// 创建新的监听器管理器
     pub fn new() -> Self {
+        // 从配置读取全局自动索引开关（默认启用）
+        // 说明：该开关需要跨重启生效，因此不再仅依赖进程内状态
+        let enabled_from_config = crate::config::load_standalone_config()
+            .ok()
+            .and_then(|c| c.mcp_config.acemcp_auto_index_enabled)
+            .unwrap_or(true);
+        log_debug!("初始化自动索引开关: {}", enabled_from_config);
+
         Self {
             watchers: Arc::new(Mutex::new(HashMap::new())),
-            auto_index_enabled: Arc::new(Mutex::new(true)), // 默认启用
+            auto_index_enabled: Arc::new(Mutex::new(enabled_from_config)),
         }
     }
 
@@ -54,9 +62,12 @@ impl WatcherManager {
             return Ok(());
         }
 
-        let normalized_root = PathBuf::from(&project_root)
+        // 规范化路径（用于 key）+ 使用 canonical 路径作为 watcher 监听路径
+        // 说明：避免 Windows 扩展路径前缀/反斜杠差异导致“监听失败/重复监听/无法停止监听”
+        let watch_path = PathBuf::from(&project_root)
             .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(&project_root))
+            .unwrap_or_else(|_| PathBuf::from(&project_root));
+        let normalized_root = watch_path
             .to_string_lossy()
             .replace('\\', "/");
 
@@ -99,7 +110,7 @@ impl WatcherManager {
         // 添加监听路径
         debouncer
             .watcher()
-            .watch(Path::new(&project_root), RecursiveMode::Recursive)?;
+            .watch(&watch_path, RecursiveMode::Recursive)?;
 
         log_important!(info, "文件监听已启动: {}", normalized_root);
 
@@ -111,12 +122,21 @@ impl WatcherManager {
 
         // 启动后台任务处理索引更新
         let project_root_clone = normalized_root.clone();
-        let config_clone = config.clone();
+        let config_fallback = config.clone();
         tokio::spawn(async move {
             while let Some(_) = rx.recv().await {
                 log_important!(info, "触发自动索引更新: project_root={}", project_root_clone);
                 
-                match update_index(&config_clone, &project_root_clone).await {
+                // 每次触发时读取最新配置，避免“用户修改配置但监听仍沿用旧配置”的情况
+                let latest_config = match super::mcp::AcemcpTool::get_acemcp_config().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log_debug!("获取最新 acemcp 配置失败，将使用启动监听时的配置（不影响索引）: {}", e);
+                        config_fallback.clone()
+                    }
+                };
+
+                match update_index(&latest_config, &project_root_clone).await {
                     Ok(blob_names) => {
                         log_important!(info, "自动索引更新成功: project_root={}, blobs={}", project_root_clone, blob_names.len());
                     }

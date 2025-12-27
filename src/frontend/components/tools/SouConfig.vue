@@ -87,10 +87,12 @@ const speedTestResult = ref<SpeedTestResult | null>(null)
 const speedTestMode = ref<'proxy' | 'direct' | 'compare'>('compare')
 const speedTestQuery = ref('代码搜索测试')
 const multiQuerySearchDetails = ref<SpeedTestQueryDetail[]>([])
+const multiQueryDetailsExpanded = ref(false)
 
 const speedTestQueries = computed(() => {
   return (speedTestQuery.value || '')
     .split(/\r?\n/g)
+    .flatMap(line => line.split(';'))
     .map(s => s.trim())
     .filter(Boolean)
     .slice(0, 5)
@@ -120,6 +122,32 @@ const multiQuerySearchSummary = computed(() => {
     proxy_ok: proxyTimes.length,
     direct_ok: directTimes.length,
   }
+})
+
+const speedTestMetricsForDisplay = computed(() => {
+  const r = speedTestResult.value
+  if (!r) {
+    return []
+  }
+
+  const metrics = r.metrics || []
+
+  // 多查询时：逐条搜索指标会比较多，默认只展示“搜索平均 + 其他指标”
+  if (multiQuerySearchSummary.value) {
+    const out = metrics.filter(m => m.metric_type !== 'search')
+
+    // 兜底：如果没有“搜索平均”，保留第一条搜索指标，避免完全看不到搜索耗时
+    if (!out.some(m => m.metric_type === 'search_multi_avg')) {
+      const firstSearch = metrics.find(m => m.metric_type === 'search')
+      if (firstSearch) {
+        out.push(firstSearch)
+      }
+    }
+
+    return out
+  }
+
+  return metrics
 })
 const extraDetectPortsText = ref('')
 const proxyPickerVisible = ref(false)
@@ -643,100 +671,88 @@ async function runSpeedTest() {
   proxyTesting.value = true
   speedTestResult.value = null
   multiQuerySearchDetails.value = []
+  multiQueryDetailsExpanded.value = false
 
   try {
-    const rawQueries = (speedTestQuery.value || '')
+    // 与后端保持一致：按换行/分号分隔，最多 5 条
+    const rawQueryCount = (speedTestQuery.value || '')
       .split(/\r?\n/g)
+      .flatMap(line => line.split(';'))
       .map(s => s.trim())
       .filter(Boolean)
+      .length
 
-    const queries = rawQueries.slice(0, 5)
-    if (queries.length === 0) {
-      message.warning('请输入至少一个测试查询')
-      return
-    }
-    if (rawQueries.length > 5) {
-      message.info('测试查询过多，已截断为前 5 条')
+    if (rawQueryCount > 5) {
+      message.info('测试查询过多，已按前 5 条执行')
     }
 
     const uploadMaxFiles = projectUploadMode.value === 'sample'
       ? Math.max(1, Number(projectUploadMaxFiles.value) || 200)
       : undefined
 
-    let firstResult: SpeedTestResult | null = null
+    // 后端已支持多查询（换行/分号分隔），因此前端只需调用一次
+    const effectiveTestQuery = (speedTestQuery.value || '').trim()
+      ? speedTestQuery.value
+      : '代码搜索测试'
 
-    for (let i = 0; i < queries.length; i++) {
-      const q = queries[i]
+    const result = await invoke('test_acemcp_proxy_speed', {
+      testMode: speedTestMode.value,
+      proxyHost: config.value.proxy_host,
+      proxyPort: config.value.proxy_port,
+      proxyType: config.value.proxy_type,
+      proxyUsername: config.value.proxy_username,
+      proxyPassword: config.value.proxy_password,
+      testQuery: effectiveTestQuery,
+      projectRootPath: speedTestProjectRoot.value,
+      projectUploadMode: projectUploadMode.value,
+      projectUploadMaxFiles: uploadMaxFiles,
+    }) as SpeedTestResult
 
-      // 避免多查询情况下重复触发上传测速：仅第 1 条查询执行上传测速
-      const projectRootPath = i === 0 ? speedTestProjectRoot.value : ''
+    // 从后端返回的 metrics 中解析多条搜索指标（与输入顺序对齐）
+    const effectiveQueries = speedTestQueries.value.length > 0
+      ? speedTestQueries.value
+      : ['代码搜索测试']
 
-      const result = await invoke('test_acemcp_proxy_speed', {
-        testMode: speedTestMode.value,
-        proxyHost: config.value.proxy_host,
-        proxyPort: config.value.proxy_port,
-        proxyType: config.value.proxy_type,
-        proxyUsername: config.value.proxy_username,
-        proxyPassword: config.value.proxy_password,
-        testQuery: q,
-        projectRootPath,
-        projectUploadMode: projectUploadMode.value,
-        projectUploadMaxFiles: uploadMaxFiles,
-      }) as SpeedTestResult
-
-      if (i === 0) {
-        firstResult = result
-      }
-
-      const searchMetric = (result.metrics || []).find(m => m.metric_type === 'search')
-      multiQuerySearchDetails.value.push({
+    const searchMetrics = (result.metrics || []).filter(m => m.metric_type === 'search')
+    multiQuerySearchDetails.value = effectiveQueries.map((q, idx) => {
+      const m = searchMetrics[idx]
+      return {
         query: q,
-        proxy_time_ms: searchMetric?.proxy_time_ms ?? null,
-        direct_time_ms: searchMetric?.direct_time_ms ?? null,
-        success: searchMetric?.success ?? false,
-        error: searchMetric?.error ?? null,
-      })
-    }
+        proxy_time_ms: m?.proxy_time_ms ?? null,
+        direct_time_ms: m?.direct_time_ms ?? null,
+        success: m?.success ?? false,
+        error: m?.error ?? (m ? null : '未返回搜索指标'),
+      }
+    })
 
-    if (!firstResult) {
-      throw new Error('测速结果为空')
-    }
-
-    // 多查询：在卡片里补充“语义搜索（平均）”指标，并将默认搜索指标标记为 Q1
-    if (queries.length > 1) {
-      const search0 = (firstResult.metrics || []).find(m => m.metric_type === 'search')
-      if (search0) {
-        search0.name = '🔍 语义搜索 (Q1)'
+    // 多查询：在卡片里补充“语义搜索（平均）”指标
+    const s = multiQuerySearchSummary.value
+    if (s) {
+      const avgMetric: SpeedTestMetric = {
+        name: `🔎 语义搜索（${s.total} 条平均）`,
+        metric_type: 'search_multi_avg',
+        proxy_time_ms: s.proxy_avg_ms,
+        direct_time_ms: s.direct_avg_ms,
+        success: true,
+        error: null,
       }
 
-      const s = multiQuerySearchSummary.value
-      if (s) {
-        const avgMetric: SpeedTestMetric = {
-          name: `🔎 语义搜索（${s.total} 条平均）`,
-          metric_type: 'search_multi_avg',
-          proxy_time_ms: s.proxy_avg_ms,
-          direct_time_ms: s.direct_avg_ms,
-          success: true,
-          error: null,
-        }
-
-        // 如果某一侧完全没有成功数据，则标记为失败并给出原因
-        if (speedTestMode.value !== 'direct' && s.proxy_ok === 0) {
-          avgMetric.success = false
-          avgMetric.error = '代理侧无有效搜索耗时（全部失败或未返回）'
-        }
-        if (speedTestMode.value !== 'proxy' && s.direct_ok === 0) {
-          avgMetric.success = false
-          avgMetric.error = [avgMetric.error, '直连侧无有效搜索耗时（全部失败或未返回）'].filter(Boolean).join('；')
-        }
-
-        firstResult.metrics.push(avgMetric)
+      // 如果某一侧完全没有成功数据，则标记为失败并给出原因
+      if (speedTestMode.value !== 'direct' && s.proxy_ok === 0) {
+        avgMetric.success = false
+        avgMetric.error = '代理侧无有效搜索耗时（全部失败或未返回）'
       }
+      if (speedTestMode.value !== 'proxy' && s.direct_ok === 0) {
+        avgMetric.success = false
+        avgMetric.error = [avgMetric.error, '直连侧无有效搜索耗时（全部失败或未返回）'].filter(Boolean).join('；')
+      }
+
+      result.metrics.push(avgMetric)
     }
 
-    speedTestResult.value = firstResult
+    speedTestResult.value = result
 
-    if (firstResult.success) {
+    if (result.success) {
       message.success('测速完成')
     }
     else {
@@ -844,6 +860,50 @@ async function copySpeedTestReport() {
   try {
     await navigator.clipboard.writeText(JSON.stringify(report, null, 2))
     message.success('已复制测速报告（JSON）')
+  }
+  catch (e) {
+    message.error(`复制失败: ${e}`)
+  }
+}
+
+/** 复制单条多查询明细到剪贴板（JSON，不包含 token 与密码） */
+async function copyQueryDetail(detail: SpeedTestQueryDetail, idx: number) {
+  if (!speedTestResult.value) {
+    message.warning('暂无测速结果可复制')
+    return
+  }
+
+  const payload = {
+    tool: 'sou',
+    timestamp: speedTestResult.value.timestamp,
+    query_index: idx + 1,
+    query: detail.query,
+    mode: speedTestResult.value.mode,
+    project: {
+      root: speedTestProjectRoot.value,
+      name: getProjectName(speedTestProjectRoot.value),
+    },
+    proxy: speedTestResult.value.mode === 'direct'
+      ? { enabled: false }
+      : {
+          enabled: true,
+          type: config.value.proxy_type,
+          host: config.value.proxy_host,
+          port: config.value.proxy_port,
+          username: config.value.proxy_username || undefined,
+          password_set: Boolean(config.value.proxy_password),
+        },
+    metric: {
+      proxy_time_ms: detail.proxy_time_ms,
+      direct_time_ms: detail.direct_time_ms,
+      success: detail.success,
+      error: detail.error,
+    },
+  }
+
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+    message.success(`已复制 Q${idx + 1} 明细（JSON）`)
   }
   catch (e) {
     message.error(`复制失败: ${e}`)
@@ -1098,7 +1158,7 @@ defineExpose({ saveConfig })
                         />
                         <template #feedback>
                           <span class="form-feedback">
-                            每行 1 条，最多 5 条；多条查询时仅第 1 条包含上传测速，后续只做 Ping + 语义搜索。
+                            每行 1 条（或用 <code class="code-inline">;</code> 分隔），最多 5 条；多条查询时：Ping/上传只测一次，语义搜索会逐条测试并汇总。
                             <span v-if="speedTestQueries.length > 1">
                               当前：{{ speedTestQueries.length }} 条
                             </span>
@@ -1206,6 +1266,13 @@ defineExpose({ saveConfig })
                     </template>
                     <span>{{ speedTestDisabledReason || '请完善测速前置条件' }}</span>
                   </n-tooltip>
+                </div>
+
+                <div
+                  v-if="proxyTesting"
+                  class="mt-2 text-xs text-gray-500 dark:text-gray-300"
+                >
+                  正在测速…（{{ speedTestQueries.length || 1 }} 条查询）
                 </div>
 
                 <!-- 检测到的代理列表 -->
@@ -1426,9 +1493,18 @@ defineExpose({ saveConfig })
                         <div class="text-xs font-medium text-slate-700 dark:text-slate-200">
                           多查询搜索汇总（{{ multiQuerySearchSummary.total }} 条）
                         </div>
-                        <n-tag type="info" size="small">
-                          仅 Q1 含上传测速
-                        </n-tag>
+                        <div class="flex items-center gap-2">
+                          <n-tag type="info" size="small">
+                            Ping/上传只测一次
+                          </n-tag>
+                          <n-button
+                            size="tiny"
+                            quaternary
+                            @click="multiQueryDetailsExpanded = !multiQueryDetailsExpanded"
+                          >
+                            {{ multiQueryDetailsExpanded ? '收起明细' : '展开明细' }}
+                          </n-button>
+                        </div>
                       </div>
 
                       <div class="mt-2 text-xs text-gray-600 dark:text-gray-300">
@@ -1446,34 +1522,53 @@ defineExpose({ saveConfig })
                         </span>
                       </div>
 
-                      <div class="mt-2 space-y-2">
-                        <div
-                          v-for="(d, idx) in multiQuerySearchDetails"
-                          :key="idx"
-                          class="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700/60"
-                        >
-                          <div class="text-xs text-gray-500 break-words">
-                            Q{{ idx + 1 }}：{{ d.query }}
-                          </div>
-                          <div class="mt-1 flex items-center justify-between text-sm">
-                            <div v-if="speedTestResult.mode !== 'direct'" class="text-blue-600">
-                              代理：{{ d.proxy_time_ms !== null ? `${d.proxy_time_ms}ms` : '-' }}
+                      <n-collapse-transition :show="multiQueryDetailsExpanded">
+                        <div class="mt-2 space-y-2">
+                          <div
+                            v-for="(d, idx) in multiQuerySearchDetails"
+                            :key="idx"
+                            class="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700/60"
+                          >
+                            <div class="flex items-start justify-between gap-2">
+                              <div class="text-xs text-gray-500 break-words">
+                                Q{{ idx + 1 }}：{{ d.query }}
+                              </div>
+                              <n-tooltip>
+                                <template #trigger>
+                                  <n-button
+                                    size="tiny"
+                                    quaternary
+                                    @click="copyQueryDetail(d, idx)"
+                                  >
+                                    <template #icon>
+                                      <div class="i-carbon-copy" />
+                                    </template>
+                                  </n-button>
+                                </template>
+                                <span>复制该条明细（JSON，不包含 token 与密码）</span>
+                              </n-tooltip>
                             </div>
-                            <div v-if="speedTestResult.mode !== 'proxy'" class="text-orange-600 text-right">
-                              直连：{{ d.direct_time_ms !== null ? `${d.direct_time_ms}ms` : '-' }}
+
+                            <div class="mt-1 flex items-center justify-between text-sm">
+                              <div v-if="speedTestResult.mode !== 'direct'" class="text-blue-600">
+                                代理：{{ d.proxy_time_ms !== null ? `${d.proxy_time_ms}ms` : '-' }}
+                              </div>
+                              <div v-if="speedTestResult.mode !== 'proxy'" class="text-orange-600 text-right">
+                                直连：{{ d.direct_time_ms !== null ? `${d.direct_time_ms}ms` : '-' }}
+                              </div>
                             </div>
-                          </div>
-                          <div v-if="d.error" class="mt-1 text-xs text-red-500 break-words">
-                            {{ d.error }}
+                            <div v-if="d.error" class="mt-1 text-xs text-red-500 break-words">
+                              {{ d.error }}
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      </n-collapse-transition>
                     </div>
 
                     <!-- 指标卡片 -->
                     <n-grid :x-gap="12" :y-gap="12" :cols="12">
                       <n-grid-item
-                        v-for="(metric, idx) in speedTestResult.metrics"
+                        v-for="(metric, idx) in speedTestMetricsForDisplay"
                         :key="idx"
                         :span="6"
                       >

@@ -971,7 +971,8 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
             
             // 详细记录每个 blob 的信息
             for (idx, blob) in batch.iter().enumerate() {
-                log_important!(info,
+                // 注意：这里的 path 可能包含项目结构信息，默认降级到 debug，避免日志膨胀
+                log_debug!(
                     "  批次 {} - Blob {}/{}: path={}, content_length={}",
                     i + 1,
                     idx + 1,
@@ -982,7 +983,12 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
             }
             
             let payload = serde_json::json!({"blobs": batch});
-            log_important!(info, "批次载荷大小: {} 字节", payload.to_string().len());
+            // 避免对 payload 执行 to_string（会序列化并复制大量代码内容）
+            // 这里仅记录一个近似大小（字符数），用于排查性能问题
+            let approx_chars: usize = batch.iter()
+                .map(|b| b.path.len() + b.content.len())
+                .sum();
+            log_debug!("批次载荷概要: blobs={}, approx_chars={}", batch.len(), approx_chars);
             
             match retry_request(|| async {
                 let r = client
@@ -1002,7 +1008,17 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
                 }
                 
                 let v: serde_json::Value = r.json().await?;
-                log_important!(info, "响应数据: {}", serde_json::to_string_pretty(&v).unwrap_or_default());
+                // 只记录摘要，避免把响应全文（可能较大）写入日志
+                let keys: Vec<String> = v
+                    .as_object()
+                    .map(|m| m.keys().cloned().collect())
+                    .unwrap_or_default();
+                let blob_names_len = v
+                    .get("blob_names")
+                    .and_then(|x| x.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+                log_important!(info, "上传响应摘要: keys={:?}, blob_names={}", keys, blob_names_len);
                 Ok(v)
             }, 3, 1.0).await {
                 Ok(value) => {
@@ -1022,7 +1038,8 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
                             log_important!(info, "批次 {} 上传成功，获得 {} 个blob名称", i + 1, batch_names.len());
                             // 详细记录每个上传成功的 blob 名称
                             for (idx, name) in batch_names.iter().enumerate() {
-                                log_important!(info, "  批次 {} - 上传成功 Blob {}/{}: name={}", i + 1, idx + 1, batch_names.len(), name);
+                                // 默认降级到 debug，避免日志文件过大
+                                log_debug!("  批次 {} - 上传成功 Blob {}/{}: name={}", i + 1, idx + 1, batch_names.len(), name);
                             }
                         }
                     } else {
@@ -1173,8 +1190,6 @@ async fn search_only(config: &AcemcpConfig, project_root_path: &str, query: &str
         "enable_commit_retrieval": false,
     });
 
-    log_important!(info, "检索载荷大小: {} 字节", payload.to_string().len());
-
     // 创建 HTTP 客户端（支持代理）
     let client = create_acemcp_client(config)?;
     let value: serde_json::Value = retry_request(|| async {
@@ -1195,7 +1210,17 @@ async fn search_only(config: &AcemcpConfig, project_root_path: &str, query: &str
         }
 
         let v: serde_json::Value = r.json().await?;
-        log_important!(info, "检索响应数据: {}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        // 只记录摘要，避免将 formatted_retrieval（可能包含大量代码片段）写入日志
+        let keys: Vec<String> = v
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        let formatted_len = v
+            .get("formatted_retrieval")
+            .and_then(|x| x.as_str())
+            .map(|s| s.len())
+            .unwrap_or(0);
+        log_important!(info, "检索响应摘要: keys={:?}, formatted_retrieval_len={}", keys, formatted_len);
         Ok(v)
     }, 3, 2.0).await?;
 

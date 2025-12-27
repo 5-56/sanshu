@@ -117,6 +117,7 @@ pub struct McpConfig {
     pub acemcp_text_extensions: Option<Vec<String>>, // acemcp文件扩展名
     pub acemcp_exclude_patterns: Option<Vec<String>>, // acemcp排除模式
     pub acemcp_watch_debounce_ms: Option<u64>, // 文件监听防抖延迟（毫秒），默认 180000 (3分钟)
+    pub acemcp_auto_index_enabled: Option<bool>, // 全局自动索引开关（默认启用）
     // Sou 代理配置
     pub acemcp_proxy_enabled: Option<bool>, // 代理启用开关
     pub acemcp_proxy_host: Option<String>, // 代理主机地址
@@ -292,6 +293,7 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_text_extensions: None,
         acemcp_exclude_patterns: None,
         acemcp_watch_debounce_ms: None, // 使用默认值 180000ms (3分钟)
+        acemcp_auto_index_enabled: None, // 默认启用（未设置时视为 true）
         // 代理配置默认值
         acemcp_proxy_enabled: None,
         acemcp_proxy_host: None,
