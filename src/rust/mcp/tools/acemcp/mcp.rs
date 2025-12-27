@@ -372,7 +372,7 @@ struct BlobItem {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct ProjectsFile(HashMap<String, Vec<String>>);
+pub(crate) struct ProjectsFile(pub HashMap<String, Vec<String>>);
 
 fn normalize_base_url(input: &str) -> String {
     let mut url = input.trim().to_string();
@@ -428,7 +428,7 @@ where
         .unwrap_or_else(|| anyhow::anyhow!("未知错误")))
 }
 
-fn home_projects_file() -> PathBuf {
+pub(crate) fn home_projects_file() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let data_dir = home.join(".acemcp").join("data");
     let _ = fs::create_dir_all(&data_dir);

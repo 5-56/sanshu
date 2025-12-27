@@ -718,7 +718,7 @@ function formatRelativeTime(timeStr: string | null): string {
     class="custom-modal"
     preset="card"
     title="代理设置与网络诊断"
-    :style="{ width: '800px', maxWidth: '95vw' }"
+    :style="{ width: '900px', maxWidth: '95vw' }"
     :bordered="false"
     size="medium"
     role="dialog"

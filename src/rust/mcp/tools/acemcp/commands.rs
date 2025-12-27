@@ -1131,6 +1131,33 @@ pub async fn test_acemcp_proxy_speed(
     
     // 2. 语义搜索测试（支持多条查询：按换行/分号分隔）
     let search_url = format!("{}/agents/codebase-retrieval", base_url);
+    
+    // 从 projects.json 加载测试项目的 blob_names（与 mcp.rs::search_only 保持一致）
+    let blob_names: Vec<String> = {
+        use std::path::PathBuf;
+        
+        let projects_path = super::mcp::home_projects_file();
+        let projects: super::mcp::ProjectsFile = if projects_path.exists() {
+            let data = std::fs::read_to_string(&projects_path).unwrap_or_default();
+            serde_json::from_str(&data).unwrap_or_default()
+        } else {
+            super::mcp::ProjectsFile::default()
+        };
+        
+        let normalized_root = PathBuf::from(&project_root_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&project_root_path))
+            .to_string_lossy()
+            .replace('\\', "/");
+        
+        projects.0.get(&normalized_root).cloned().unwrap_or_default()
+    };
+    
+    log::info!("🔍 [SpeedTest] 加载项目 blob_names: 数量={}", blob_names.len());
+    
+    if blob_names.is_empty() {
+        log::warn!("⚠️ [SpeedTest] 项目未索引或索引为空，搜索测试可能返回空结果");
+    }
 
     let mut queries: Vec<String> = test_query
         .split('\n')
@@ -1176,9 +1203,13 @@ pub async fn test_acemcp_proxy_speed(
 
         let search_payload = serde_json::json!({
             "information_request": q,
-            "blobs": {"checkpoint_id": null, "added_blobs": [], "deleted_blobs": []},
+            "blobs": {
+                "checkpoint_id": serde_json::Value::Null, 
+                "added_blobs": blob_names.clone(),  // 使用已索引的 blob_names
+                "deleted_blobs": []
+            },
             "dialog": [],
-            "max_output_length": 100,
+            "max_output_length": 0,  // 与 search_only 保持一致
             "disable_codebase_retrieval": false,
             "enable_commit_retrieval": false,
         });
@@ -1916,17 +1947,36 @@ fn parse_search_result_preview(body: &str) -> Option<super::types::SearchResultP
         log::debug!("🔍 [SpeedTest] 发现 formatted_retrieval 字段, 长度={}", formatted.len());
         
         if !formatted.is_empty() && formatted != "No relevant code context found for your query." {
-            // ACE 格式通常是按 "---" 或空行分隔的多个代码块
+            // 跳过 ACE 标题行（如 "The following code sections were retrieved:"）
+            let content = formatted
+                .strip_prefix("The following code sections were retrieved:")
+                .or_else(|| formatted.strip_prefix("The following code sections were retrieved:\n"))
+                .unwrap_or(formatted)
+                .trim();
+            
+            log::debug!("🔍 [SpeedTest] 处理后内容长度={}", content.len());
+            
+            // ACE 格式通常是按 "---" 分隔的多个代码块
             // 每个块包含文件路径和代码内容
-            let blocks: Vec<&str> = formatted
+            let blocks: Vec<&str> = content
                 .split("\n---\n")
-                .chain(formatted.split("\n\n"))
-                .filter(|b| !b.trim().is_empty())
+                .filter(|b| !b.trim().is_empty() && b.len() > 10)
                 .collect();
             
-            total_matches = blocks.len().min(10); // 估计匹配数
+            // 如果没有 --- 分隔，尝试按双空行分隔
+            let blocks = if blocks.len() <= 1 {
+                content
+                    .split("\n\n")
+                    .filter(|b| !b.trim().is_empty() && b.len() > 10)
+                    .collect()
+            } else {
+                blocks
+            };
             
-            for block in blocks.iter().take(3) {
+            total_matches = blocks.len().max(1); // 至少有一个匹配
+            log::debug!("🔍 [SpeedTest] 分割出 {} 个代码块", blocks.len());
+            
+            for block in blocks.iter().take(5) {
                 let lines: Vec<&str> = block.lines().collect();
                 if lines.is_empty() {
                     continue;
@@ -1939,43 +1989,51 @@ fn parse_search_result_preview(body: &str) -> Option<super::types::SearchResultP
                     .strip_prefix("Path: ")
                     .or_else(|| first_line.strip_prefix("File: "))
                     .or_else(|| first_line.strip_prefix("# "))
+                    .or_else(|| first_line.strip_prefix("## "))
                     .or_else(|| {
-                        // 如果第一行看起来是文件路径（包含 / 或 . 扩展名）
-                        if first_line.contains('/') || first_line.contains('.') {
+                        // 如果第一行看起来是文件路径（包含 / 或 \ 或常见扩展名）
+                        if first_line.contains('/') || first_line.contains('\\') 
+                           || first_line.ends_with(".rs") || first_line.ends_with(".ts")
+                           || first_line.ends_with(".vue") || first_line.ends_with(".py") {
                             Some(*first_line)
                         } else {
                             None
                         }
                     })
-                    .unwrap_or("code snippet")
+                    .unwrap_or("代码片段")
+                    .trim()
                     .to_string();
                 
-                // 提取代码片段（去除路径行，取前10行）
+                // 提取代码片段（去除路径行，取前20行）
                 let snippet: String = lines.iter()
                     .skip(1)
-                    .take(10)
+                    .take(20)
                     .copied()
                     .collect::<Vec<_>>()
                     .join("\n");
                 
-                let snippet_content = if snippet.is_empty() {
+                let snippet_content = if snippet.is_empty() || snippet.len() < 10 {
                     // 如果没有内容，使用整个块（可能第一行不是路径）
-                    lines.iter().take(10).copied().collect::<Vec<_>>().join("\n")
+                    lines.iter().take(20).copied().collect::<Vec<_>>().join("\n")
                 } else {
                     snippet
                 };
                 
-                if !snippet_content.is_empty() {
-                    snippets.push(SearchResultSnippet {
-                        file_path,
-                        snippet: if snippet_content.len() > 300 {
-                            format!("{}...", &snippet_content[..300])
-                        } else {
-                            snippet_content
-                        },
-                        line_number: None,
-                    });
+                // 跳过只有标题的块
+                if snippet_content.trim().is_empty() 
+                   || snippet_content.starts_with("The following") {
+                    continue;
                 }
+                
+                snippets.push(SearchResultSnippet {
+                    file_path,
+                    snippet: if snippet_content.len() > 800 {
+                        format!("{}...", &snippet_content[..800])
+                    } else {
+                        snippet_content
+                    },
+                    line_number: None,
+                });
             }
         }
         
