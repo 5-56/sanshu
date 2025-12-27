@@ -263,6 +263,8 @@ impl AcemcpTool {
             proxy_host: config.mcp_config.acemcp_proxy_host,
             proxy_port: config.mcp_config.acemcp_proxy_port,
             proxy_type: config.mcp_config.acemcp_proxy_type,
+            proxy_username: config.mcp_config.acemcp_proxy_username,
+            proxy_password: config.mcp_config.acemcp_proxy_password,
         })
     }
 
@@ -1224,14 +1226,41 @@ fn create_acemcp_client(config: &AcemcpConfig) -> anyhow::Result<Client> {
         let port = config.proxy_port.unwrap_or(7890);
         let proxy_type = config.proxy_type.clone().unwrap_or_else(|| "http".to_string());
         
-        log_important!(info, "🔧 使用代理: {}://{}:{}", proxy_type, host, port);
+        // 校验代理类型，避免拼接出无效 URL
+        match proxy_type.as_str() {
+            "http" | "https" | "socks5" => {}
+            other => anyhow::bail!("不支持的代理类型: {}（仅支持 http/https/socks5）", other),
+        }
+
+        // 仅用于日志提示（避免泄露密码）
+        let has_auth = config
+            .proxy_username
+            .as_deref()
+            .map(|u| !u.trim().is_empty())
+            .unwrap_or(false);
+
+        if has_auth {
+            log_important!(info, "🔧 使用代理: {}://{}:{}（带认证）", proxy_type, host, port);
+        } else {
+            log_important!(info, "🔧 使用代理: {}://{}:{}", proxy_type, host, port);
+        }
         
         // 构建代理 URL
         let proxy_url = format!("{}://{}:{}", proxy_type, host, port);
         
         // 使用 Proxy::all() 让所有请求都走代理
-        let reqwest_proxy = reqwest::Proxy::all(&proxy_url)
+        let mut reqwest_proxy = reqwest::Proxy::all(&proxy_url)
             .map_err(|e| anyhow::anyhow!("创建代理失败: {}", e))?;
+
+        // 代理认证（Basic Auth）
+        if let Some(username) = config.proxy_username.as_deref() {
+            let username = username.trim();
+            if !username.is_empty() {
+                let password = config.proxy_password.as_deref().unwrap_or("");
+                reqwest_proxy = reqwest_proxy.basic_auth(username, password);
+            }
+        }
+
         client_builder = client_builder.proxy(reqwest_proxy);
     } else {
         log_debug!("使用直连模式（未启用代理）");

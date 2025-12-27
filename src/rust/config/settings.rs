@@ -121,7 +121,9 @@ pub struct McpConfig {
     pub acemcp_proxy_enabled: Option<bool>, // 代理启用开关
     pub acemcp_proxy_host: Option<String>, // 代理主机地址
     pub acemcp_proxy_port: Option<u16>, // 代理端口
-    pub acemcp_proxy_type: Option<String>, // 代理类型: "http" | "socks5"
+    pub acemcp_proxy_type: Option<String>, // 代理类型: "http" | "https" | "socks5"
+    pub acemcp_proxy_username: Option<String>, // 代理用户名（可选）
+    pub acemcp_proxy_password: Option<String>, // 代理密码（可选）
     pub context7_api_key: Option<String>, // Context7 API密钥 (可选，免费使用时可为空)
 }
 
@@ -295,6 +297,8 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_proxy_host: None,
         acemcp_proxy_port: None,
         acemcp_proxy_type: None,
+        acemcp_proxy_username: None,
+        acemcp_proxy_password: None,
         context7_api_key: None,
     }
 }

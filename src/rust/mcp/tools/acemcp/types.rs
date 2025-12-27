@@ -37,8 +37,12 @@ pub struct AcemcpConfig {
     pub proxy_host: Option<String>,
     /// 代理端口
     pub proxy_port: Option<u16>,
-    /// 代理类型: "http" | "socks5"
+    /// 代理类型: "http" | "https" | "socks5"
     pub proxy_type: Option<String>,
+    /// 代理用户名（可选）
+    pub proxy_username: Option<String>,
+    /// 代理密码（可选）
+    pub proxy_password: Option<String>,
 }
 
 
