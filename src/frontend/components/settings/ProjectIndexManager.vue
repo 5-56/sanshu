@@ -13,6 +13,22 @@ const { triggerIndexUpdate } = useAcemcpSync()
 const message = useMessage()
 const dialog = useDialog()
 
+/**
+ * 规范化 Windows 路径
+ * 去除扩展长度路径前缀 (\\?\ 或 //?/) 并统一使用正斜杠
+ */
+function normalizePath(path: string): string {
+  let p = path || ''
+  // 去除 Windows 扩展长度路径前缀
+  if (p.startsWith('\\\\?\\')) {
+    p = p.slice(4)
+  } else if (p.startsWith('//?/')) {
+    p = p.slice(4)
+  }
+  // 统一使用正斜杠
+  return p.replace(/\\/g, '/')
+}
+
 // 本地状态
 const loading = ref(true)
 const allProjects = ref<Record<string, ProjectIndexStatus>>({})
@@ -233,34 +249,37 @@ async function copyPath(path: string) {
 
 // 切换项目监听状态
 async function toggleWatching(projectRoot: string) {
-  const currentlyWatching = watchingProjects.value.includes(projectRoot)
+  // 规范化路径，去除 Windows 扩展前缀
+  const normalizedPath = normalizePath(projectRoot)
+  const currentlyWatching = watchingProjects.value.some(p => normalizePath(p) === normalizedPath)
   try {
     if (currentlyWatching) {
-      await invoke('stop_project_watching', { projectRootPath: projectRoot })
+      await invoke('stop_project_watching', { projectRootPath: normalizedPath })
       message.success('已停止监听项目')
     }
     else {
-      await invoke('trigger_acemcp_index_update', { projectRootPath: projectRoot })
+      await invoke('trigger_acemcp_index_update', { projectRootPath: normalizedPath })
       message.success('已开启监听项目')
     }
     watchingProjects.value = await invoke<string[]>('get_watching_projects')
   }
   catch (err) {
     console.error('切换监听状态失败:', err)
-    message.error('操作失败')
+    message.error(`操作失败: ${err}`)
   }
 }
 
 // 重新索引（带二次确认）
 function handleReindex(projectRoot: string) {
+  const normalizedPath = normalizePath(projectRoot)
   dialog.warning({
     title: '确认重新索引',
-    content: `确定要重新索引项目吗？\n\n${projectRoot}\n\n这将重新扫描所有文件并更新索引。`,
+    content: `确定要重新索引项目吗？\n\n${normalizedPath}\n\n这将重新扫描所有文件并更新索引。`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await triggerIndexUpdate(projectRoot)
+        await triggerIndexUpdate(normalizedPath)
         message.success('已触发重新索引')
         // 延迟刷新状态
         setTimeout(() => loadAllData(), 1000)
@@ -275,7 +294,7 @@ function handleReindex(projectRoot: string) {
 
 // 查看项目结构树
 function viewProjectTree(projectRoot: string) {
-  selectedProject.value = projectRoot
+  selectedProject.value = normalizePath(projectRoot)
   showDrawer.value = true
 }
 
@@ -285,6 +304,7 @@ async function handleDrawerResync() {
     return
   resyncLoading.value = true
   try {
+    // selectedProject 已经是规范化的路径
     await triggerIndexUpdate(selectedProject.value)
     message.success('已触发重新索引')
     // 延迟刷新状态
@@ -292,7 +312,7 @@ async function handleDrawerResync() {
   }
   catch (err) {
     console.error('重新索引失败:', err)
-    message.error('重新索引失败')
+    message.error(`重新索引失败: ${err}`)
   }
   finally {
     resyncLoading.value = false
