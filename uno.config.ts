@@ -15,7 +15,10 @@ export default defineConfig({
     presetAttributify(),
     presetIcons({
       collections: {
-        carbon: () => import('@iconify-json/carbon/icons.json').then(i => i.default),
+        'carbon': () => import('@iconify-json/carbon/icons.json').then(i => i.default),
+        // FontAwesome 图标集合
+        'fa6-solid': () => import('@iconify-json/fa6-solid/icons.json').then(i => i.default),
+        'fa6-regular': () => import('@iconify-json/fa6-regular/icons.json').then(i => i.default),
       },
       extraProperties: {
         'display': 'inline-block',
