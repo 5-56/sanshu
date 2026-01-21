@@ -31,6 +31,7 @@ import {
   NNotificationProvider,
   NProgress,
   NRadio,
+  NRadioButton,
   NRadioGroup,
   NScrollbar,
   NSelect,
@@ -47,9 +48,9 @@ import {
   NTooltip,
   NTree,
 } from 'naive-ui'
+import 'virtual:uno.css'
 import { createApp } from 'vue'
 import App from './App.vue'
-import 'virtual:uno.css'
 import './assets/styles/style.css'
 
 const naive = create({
@@ -98,6 +99,8 @@ const naive = create({
     NSkeleton,
     NProgress,
     NRadio,
+    // 筛选按钮需要单独注册
+    NRadioButton,
     NRadioGroup,
     NTree,
   ],

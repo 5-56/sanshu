@@ -1,20 +1,29 @@
 // 图标搜索 Hook
 // 提供图标搜索、选择、保存等功能的响应式状态管理
 
-import type {
-  ClearCacheRequest,
-  ClearCacheResult,
-  IconCacheStats,
-  IconConfig,
-  IconItem,
-  IconSaveRequest,
-  IconSaveResult,
-  IconSearchParams,
-  IconSearchResult,
-} from '../types/icon'
 import { invoke } from '@tauri-apps/api/core'
 import { computed, reactive, ref } from 'vue'
-import { DEFAULT_SEARCH_PARAMS } from '../types/icon'
+import {
+  type ClearCacheRequest,
+  type ClearCacheResult,
+  DEFAULT_SEARCH_PARAMS,
+  type IconCacheStats,
+  type IconConfig,
+  type IconItem,
+  type IconSaveRequest,
+  type IconSaveResult,
+  type IconSearchParams,
+  type IconSearchResult,
+} from '../types/icon'
+
+// 后端返回的图标搜索结果（snake_case）
+interface IconSearchResultRaw {
+  icons: any[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+}
 
 /**
  * 图标搜索 Hook
@@ -110,15 +119,29 @@ export function useIconSearch() {
         from_collection: searchParams.fromCollection,
       }
 
-      const result = await invoke<IconSearchResult>('search_icons', { request })
+      const result = await invoke<IconSearchResultRaw>('search_icons', { request })
 
       // 转换响应字段（snake_case -> camelCase）
-      searchResult.value = {
-        icons: result.icons.map(transformIconFromBackend),
-        total: result.total,
-        page: result.page,
-        pageSize: result.page_size,
-        hasMore: result.has_more,
+      const nextIcons = result.icons.map(transformIconFromBackend)
+      if (!resetPage && searchResult.value) {
+        // 追加分页结果，避免“加载更多”覆盖已有列表
+        const mergedIcons = mergeIconLists(searchResult.value.icons, nextIcons)
+        searchResult.value = {
+          icons: mergedIcons,
+          total: result.total,
+          page: result.page,
+          pageSize: result.page_size,
+          hasMore: result.has_more,
+        }
+      }
+      else {
+        searchResult.value = {
+          icons: nextIcons,
+          total: result.total,
+          page: result.page,
+          pageSize: result.page_size,
+          hasMore: result.has_more,
+        }
       }
     }
     catch (e) {
@@ -146,6 +169,19 @@ export function useIconSearch() {
       repositoryId: icon.repository_id,
       createdAt: icon.created_at,
     }
+  }
+
+  /**
+   * 合并分页图标列表，保持原顺序并去重
+   */
+  function mergeIconLists(existing: IconItem[], incoming: IconItem[]) {
+    const existingIds = new Set(existing.map(icon => icon.id))
+    const merged = [...existing]
+    for (const icon of incoming) {
+      if (!existingIds.has(icon.id))
+        merged.push(icon)
+    }
+    return merged
   }
 
   /**
