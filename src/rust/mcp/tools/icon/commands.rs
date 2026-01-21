@@ -4,6 +4,7 @@
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
+use usvg::TreeParsing;
 
 use super::api;
 use super::types::{
