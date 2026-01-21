@@ -6,7 +6,7 @@
 import type { IconItem, IconSaveRequest } from '../../../types/icon'
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useIconSearch } from '../../../composables/useIconSearch'
 import { DEFAULT_FILTER_OPTIONS } from '../../../types/icon'
 import IconCard from './IconCard.vue'
@@ -20,6 +20,8 @@ interface Props {
   initialStyle?: string
   initialSavePath?: string
   projectRoot?: string
+  // 外部保存模式（由父组件接管保存流程）
+  externalSave?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -29,7 +31,15 @@ const props = withDefaults(defineProps<Props>(), {
   initialStyle: 'all',
   initialSavePath: '',
   projectRoot: '',
+  externalSave: false,
 })
+
+const emit = defineEmits<{
+  // 外部保存请求（由父组件处理）
+  save: [request: IconSaveRequest]
+  // 选中图标变化通知（用于弹窗模式的编辑器）
+  'selection-change': [icons: IconItem[]]
+}>()
 
 // 消息提示
 const message = useMessage()
@@ -69,6 +79,11 @@ const showCacheModal = ref(false)
 const hasResults = computed(() => icons.value.length > 0)
 const isEmpty = computed(() => !loading.value && searchInput.value && !hasResults.value)
 const showEmptyState = computed(() => !loading.value && !searchInput.value && !hasResults.value)
+
+// 通知父组件选中图标变化
+watch(selectedIcons, (value) => {
+  emit('selection-change', value)
+}, { immediate: true })
 
 // 默认保存路径
 const defaultSavePath = computed(() => {
@@ -118,6 +133,13 @@ function openSaveModal() {
 
 // 保存选中的图标
 async function handleSave(request: IconSaveRequest) {
+  // 外部保存模式：由父组件负责保存与后续流程
+  if (props.externalSave) {
+    showSaveModal.value = false
+    emit('save', request)
+    return
+  }
+
   const result = await saveIcons(request)
   if (result) {
     message.success(`成功保存 ${result.successCount} 个图标`)
