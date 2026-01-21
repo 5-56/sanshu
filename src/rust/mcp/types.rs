@@ -44,6 +44,22 @@ pub struct AcemcpRequest {
     pub query: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SkillRunRequest {
+    #[schemars(description = "技能名称（仅 skill.run 需要）")]
+    #[serde(default)]
+    pub skill_name: Option<String>,
+    #[schemars(description = "动作名称（如 search/design_system/custom）")]
+    #[serde(default)]
+    pub action: Option<String>,
+    #[schemars(description = "查询或输入（可选）")]
+    #[serde(default)]
+    pub query: Option<String>,
+    #[schemars(description = "追加参数（可选）")]
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+}
+
 fn default_category() -> String {
     "context".to_string()
 }

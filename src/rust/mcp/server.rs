@@ -8,8 +8,8 @@ use rmcp::{
 use rmcp::model::*;
 use std::collections::HashMap;
 
-use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool};
-use super::types::{ZhiRequest, JiyiRequest, TuRequest};
+use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool, SkillsTool};
+use super::types::{ZhiRequest, JiyiRequest, TuRequest, SkillRunRequest};
 use crate::mcp::tools::context7::types::Context7Request;
 use crate::config::load_standalone_config;
 use crate::{log_important, log_debug};
@@ -179,6 +179,10 @@ impl ServerHandler for ZhiServer {
             tools.push(IconTool::get_tool_definition());
         }
 
+        // 技能运行时工具 - 动态发现 skills 并追加工具
+        let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        tools.extend(SkillsTool::list_dynamic_tools(&project_root));
+
         log_debug!("返回给客户端的工具列表: {:?}", tools.iter().map(|t| &t.name).collect::<Vec<_>>());
 
         Ok(ListToolsResult {
@@ -288,6 +292,18 @@ impl ServerHandler for ZhiServer {
 
                 // 调用图标工坊工具
                 IconTool::tu(tu_request).await
+            }
+            name if name == "skill.run" || name.starts_with("skill.") => {
+                // 解析请求参数
+                let arguments_value = request.arguments
+                    .map(serde_json::Value::Object)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                let skill_request: SkillRunRequest = serde_json::from_value(arguments_value)
+                    .map_err(|e| McpError::invalid_params(format!("参数解析失败: {}", e), None))?;
+
+                let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                SkillsTool::call_tool(name, skill_request, &project_root).await
             }
             _ => {
                 Err(McpError::invalid_request(

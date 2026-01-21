@@ -126,6 +126,7 @@ pub struct McpConfig {
     pub acemcp_proxy_username: Option<String>, // 代理用户名（可选）
     pub acemcp_proxy_password: Option<String>, // 代理密码（可选）
     pub context7_api_key: Option<String>, // Context7 API密钥 (可选，免费使用时可为空)
+    pub skill_python_path: Option<String>, // Skill Python 路径（可选，默认走 PATH）
 
     // 图标工坊配置
     /// 默认保存路径（相对于项目根目录，如 "assets/icons"）
@@ -312,6 +313,7 @@ pub fn default_mcp_config() -> McpConfig {
         acemcp_proxy_username: None,
         acemcp_proxy_password: None,
         context7_api_key: None,
+        skill_python_path: None,
         // 图标工坊配置默认值
         icon_default_save_path: None,      // 使用默认 "assets/icons"
         icon_default_format: None,          // 默认 SVG
