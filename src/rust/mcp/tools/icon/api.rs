@@ -49,10 +49,14 @@ static CACHE_EXPIRY_SECS: Lazy<RwLock<u64>> =
 // ============ HTTP 客户端 ============
 
 /// 创建带有默认配置的 HTTP 客户端
+/// 
+/// 注意：iconfont.cn 是国内网站，不需要代理
+/// 显式禁用代理以避免用户系统代理设置（用于翻墙）干扰
 fn create_http_client() -> Result<Client> {
     Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .no_proxy()  // 禁用代理，直连国内网站
         .build()
         .map_err(|e| anyhow!("创建 HTTP 客户端失败: {}", e))
 }
