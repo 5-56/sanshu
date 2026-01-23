@@ -7,6 +7,7 @@ pub mod acemcp;
 pub mod context7;
 pub mod icon;
 pub mod skills;
+pub mod uiux;
 
 // 重新导出工具以便访问
 pub use memory::MemoryTool;
@@ -15,3 +16,4 @@ pub use acemcp::AcemcpTool;
 pub use context7::Context7Tool;
 pub use icon::IconTool;
 pub use skills::SkillsTool;
+pub use uiux::UiuxTool;

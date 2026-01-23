@@ -11,6 +11,7 @@ use tokio::process::Command;
 use crate::config::load_standalone_config;
 use crate::{log_debug, log_important};
 use crate::mcp::types::SkillRunRequest;
+use crate::mcp::tools::UiuxTool;
 
 /// 技能运行时工具
 /// 负责发现 skills、动态注册 MCP 工具并执行 Python 入口
@@ -100,6 +101,10 @@ impl SkillsTool {
             .clone()
             .or_else(|| skill.config.as_ref().and_then(|c| c.default_action.clone()))
             .unwrap_or_else(|| "search".to_string());
+
+        if skill.name == "ui-ux-pro-max" {
+            return UiuxTool::call_from_skill(&action_name, &request).await;
+        }
 
         let (entry_rel, args) = resolve_action_args(&skill, &action_name, &mut request)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;

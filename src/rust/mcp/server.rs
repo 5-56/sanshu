@@ -8,7 +8,7 @@ use rmcp::{
 use rmcp::model::*;
 use std::collections::HashMap;
 
-use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool, SkillsTool};
+use super::tools::{InteractionTool, MemoryTool, AcemcpTool, Context7Tool, IconTool, SkillsTool, UiuxTool};
 use super::types::{ZhiRequest, JiyiRequest, TuRequest, SkillRunRequest};
 use crate::mcp::tools::context7::types::Context7Request;
 use crate::config::load_standalone_config;
@@ -179,6 +179,11 @@ impl ServerHandler for ZhiServer {
             tools.push(IconTool::get_tool_definition());
         }
 
+        // UI/UX 工具 - 仅在启用时添加
+        if self.is_tool_enabled("uiux") {
+            tools.extend(UiuxTool::get_tool_definitions());
+        }
+
         // 技能运行时工具 - 动态发现 skills 并追加工具
         let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         tools.extend(SkillsTool::list_dynamic_tools(&project_root));
@@ -292,6 +297,20 @@ impl ServerHandler for ZhiServer {
 
                 // 调用图标工坊工具
                 IconTool::tu(tu_request).await
+            }
+            name if name.starts_with("uiux.") => {
+                if !self.is_tool_enabled("uiux") {
+                    return Err(McpError::internal_error(
+                        "UI/UX 工具已被禁用".to_string(),
+                        None
+                    ));
+                }
+
+                let arguments_value = request.arguments
+                    .map(serde_json::Value::Object)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                UiuxTool::call_tool(name, arguments_value).await
             }
             name if name == "skill.run" || name.starts_with("skill.") => {
                 // 解析请求参数
