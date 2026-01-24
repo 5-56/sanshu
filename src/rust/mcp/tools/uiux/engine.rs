@@ -1772,10 +1772,10 @@ fn generate_intelligent_overrides(
     let mut layout = HashMap::new();
     let mut spacing = HashMap::new();
     // 显式类型，避免空 HashMap 无法推断类型
-    let mut typography: HashMap<String, String> = HashMap::new();
+    let typography: HashMap<String, String> = HashMap::new();
     let mut colors = HashMap::new();
     let mut components: Vec<String> = Vec::new();
-    let mut unique_components: Vec<String> = Vec::new();
+    let unique_components: Vec<String> = Vec::new();
     let mut recommendations: Vec<String> = Vec::new();
 
     if let Some(style) = style_results.first() {
