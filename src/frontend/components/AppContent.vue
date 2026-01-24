@@ -69,6 +69,8 @@ const { versionInfo, showUpdateModal } = useVersionCheck()
 
 // 弹窗中的设置显示控制
 const showPopupSettings = ref(false)
+// 设置界面当前激活的 Tab
+const activeTab = ref('intro')
 // MCP 索引详情抽屉显示控制
 const showIndexDrawer = ref(false)
 
@@ -97,6 +99,8 @@ const resyncLoading = ref(false)
 
 // 是否启用 sou 代码搜索工具
 const souEnabled = computed(() => mcpTools.value.some(tool => tool.id === 'sou' && tool.enabled))
+// 是否启用提示词增强工具
+const enhanceEnabled = computed(() => mcpTools.value.some(tool => tool.id === 'enhance' && tool.enabled))
 
 // Header 中是否需要展示 MCP 索引状态指示器
 const showMcpIndexStatus = computed(() => {
@@ -113,6 +117,12 @@ const mcpLastError = computed(() => currentProjectStatus.value?.last_error || nu
 // 切换弹窗设置显示
 function togglePopupSettings() {
   showPopupSettings.value = !showPopupSettings.value
+}
+
+// 直接打开 MCP 工具页（用于 CTA 跳转）
+function openMcpToolsTab() {
+  activeTab.value = 'mcp-tools'
+  showPopupSettings.value = true
 }
 
 // 处理索引详情抽屉中的重新同步请求
@@ -140,6 +150,7 @@ watch(() => props.mcpRequest, (newRequest) => {
   if (newRequest && showPopupSettings.value) {
     // 有新的 MCP 请求时，自动切换回消息页面
     showPopupSettings.value = false
+    activeTab.value = 'intro'
   }
 }, { immediate: true })
 
@@ -211,6 +222,8 @@ onUnmounted(() => {
       >
         <LayoutWrapper
           :app-config="props.appConfig"
+          :active-tab="activeTab"
+          :project-root-path="props.mcpRequest?.project_root_path || null"
           @theme-change="$emit('themeChange', $event)"
           @toggle-always-on-top="$emit('toggleAlwaysOnTop')"
           @toggle-audio-notification="$emit('toggleAudioNotification')"
@@ -219,6 +232,7 @@ onUnmounted(() => {
           @stop-audio="$emit('stopAudio')"
           @test-audio-error="$emit('testAudioError', $event)"
           @update-window-size="$emit('updateWindowSize', $event)"
+          @update:active-tab="activeTab = $event"
         />
       </div>
 
@@ -227,9 +241,11 @@ onUnmounted(() => {
         v-else
         :request="props.mcpRequest"
         :app-config="props.appConfig"
+        :enhance-enabled="enhanceEnabled"
         @response="$emit('mcpResponse', $event)"
         @cancel="$emit('mcpCancel')"
         @theme-change="$emit('themeChange', $event)"
+        @open-mcp-tools-tab="openMcpToolsTab"
       />
 
       <!-- MCP 代码索引详情抽屉 -->
@@ -329,6 +345,8 @@ onUnmounted(() => {
     <LayoutWrapper
       v-else
       :app-config="props.appConfig"
+      :active-tab="activeTab"
+      :project-root-path="null"
       @theme-change="$emit('themeChange', $event)"
       @toggle-always-on-top="$emit('toggleAlwaysOnTop')"
       @toggle-audio-notification="$emit('toggleAudioNotification')"
@@ -338,6 +356,7 @@ onUnmounted(() => {
       @test-audio-error="$emit('testAudioError', $event)"
       @update-window-size="$emit('updateWindowSize', $event)"
       @config-reloaded="$emit('configReloaded')"
+      @update:active-tab="activeTab = $event"
     />
 
     <!-- 更新弹窗 -->

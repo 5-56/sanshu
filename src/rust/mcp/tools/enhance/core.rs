@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 
 use super::types::*;
 use super::history::ChatHistoryManager;
+use crate::mcp::tools::interaction::ZhiHistoryManager;
 use crate::mcp::tools::acemcp::mcp::ProjectsFile;
 use crate::{log_debug, log_important};
 
@@ -29,6 +30,11 @@ Here is an enhanced version of the original instruction that is more specific an
 Here is my original instruction:
 
 "#;
+
+/// zhi 历史摘要最大条数
+const MAX_ZHI_HISTORY_ENTRIES: usize = 5;
+/// 单条摘要最大字符数（避免提示词过长）
+const MAX_ZHI_HISTORY_TEXT_LEN: usize = 200;
 
 /// 提示词增强器
 pub struct PromptEnhancer {
@@ -135,6 +141,60 @@ impl PromptEnhancer {
         }
     }
 
+    /// 截断并清理文本（避免换行和过长内容）
+    fn truncate_text(text: &str, max_len: usize) -> String {
+        let cleaned = text
+            .replace('\r', " ")
+            .replace('\n', " ")
+            .trim()
+            .to_string();
+
+        if cleaned.chars().count() <= max_len {
+            return cleaned;
+        }
+
+        let mut truncated: String = cleaned.chars().take(max_len).collect();
+        truncated.push_str("...");
+        truncated
+    }
+
+    /// 构建 zhi 交互历史摘要（轻量补充上下文）
+    fn build_zhi_history_summary(&self, count: usize) -> (String, usize) {
+        let project_root = match &self.project_root {
+            Some(path) => path.clone(),
+            None => return (String::new(), 0),
+        };
+
+        let manager = match ZhiHistoryManager::new(&project_root) {
+            Ok(manager) => manager,
+            Err(e) => {
+                log_debug!("加载 zhi 历史失败: {}", e);
+                return (String::new(), 0);
+            }
+        };
+
+        let entries = manager.get_recent(count);
+        if entries.is_empty() {
+            return (String::new(), 0);
+        }
+
+        let mut lines = Vec::new();
+        for entry in entries {
+            let prompt = Self::truncate_text(&entry.prompt, MAX_ZHI_HISTORY_TEXT_LEN);
+            let reply = Self::truncate_text(&entry.user_reply, MAX_ZHI_HISTORY_TEXT_LEN);
+            if prompt.is_empty() && reply.is_empty() {
+                continue;
+            }
+            lines.push(format!("- Q: {}\n  A: {}", prompt, reply));
+        }
+
+        if lines.is_empty() {
+            return (String::new(), 0);
+        }
+
+        (lines.join("\n"), lines.len())
+    }
+
     /// 构建 chat-stream 请求体
     fn build_request_payload(&self, prompt: &str, current_file: Option<&str>, include_history: bool) -> serde_json::Value {
         let blob_names = self.load_blob_names();
@@ -144,10 +204,29 @@ impl PromptEnhancer {
             Vec::new()
         };
 
-        log_important!(info, "构建增强请求: blob_count={}, history_count={}", blob_names.len(), chat_history.len());
+        let (zhi_summary, zhi_count) = if include_history {
+            self.build_zhi_history_summary(MAX_ZHI_HISTORY_ENTRIES)
+        } else {
+            (String::new(), 0)
+        };
 
-        // 构建完整消息
-        let full_message = format!("{}{}", ENHANCE_SYSTEM_PROMPT, prompt);
+        log_important!(
+            info,
+            "构建增强请求: blob_count={}, history_count={}, zhi_history_count={}",
+            blob_names.len(),
+            chat_history.len(),
+            zhi_count
+        );
+
+        // 构建完整消息（系统提示词 + 历史摘要 + 原始提示词）
+        let mut full_message = String::new();
+        full_message.push_str(ENHANCE_SYSTEM_PROMPT);
+        if !zhi_summary.is_empty() {
+            full_message.push_str("\n\n[最近交互摘要]\n");
+            full_message.push_str(&zhi_summary);
+            full_message.push_str("\n\n");
+        }
+        full_message.push_str(prompt);
 
         json!({
             "model": "claude-sonnet-4-5",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import IntroTab from '../tabs/IntroTab.vue'
 import McpToolsTab from '../tabs/McpToolsTab.vue'
 import PromptsTab from '../tabs/PromptsTab.vue'
@@ -15,6 +15,8 @@ interface Props {
   windowWidth: number
   windowHeight: number
   fixedWindowSize: boolean
+  activeTab?: string
+  projectRootPath?: string
 }
 
 interface Emits {
@@ -27,9 +29,10 @@ interface Emits {
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
   configReloaded: []
+  'update:activeTab': [tab: string]
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 // 处理配置重新加载事件
@@ -37,7 +40,15 @@ function handleConfigReloaded() {
   emit('configReloaded')
 }
 
-const activeTab = ref('intro')
+const internalActiveTab = ref('intro')
+// 支持外部受控切换 Tab，未传入时使用内部状态
+const activeTab = computed({
+  get: () => props.activeTab ?? internalActiveTab.value,
+  set: (value) => {
+    internalActiveTab.value = value
+    emit('update:activeTab', value)
+  },
+})
 const message = useMessage()
 
 // 图标加载错误处理
@@ -145,7 +156,7 @@ function testPopup() {
             <IntroTab />
           </n-tab-pane>
           <n-tab-pane name="mcp-tools" tab="MCP 工具">
-            <McpToolsTab />
+            <McpToolsTab :project-root-path="projectRootPath" />
           </n-tab-pane>
           <n-tab-pane name="prompts" tab="参考提示词">
             <PromptsTab />

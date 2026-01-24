@@ -163,7 +163,12 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             crate::mcp::tools::enhance::commands::enhance_prompt,
             crate::mcp::tools::enhance::commands::add_chat_history,
             crate::mcp::tools::enhance::commands::get_chat_history,
-            crate::mcp::tools::enhance::commands::clear_chat_history
+            crate::mcp::tools::enhance::commands::clear_chat_history,
+
+            // zhi 交互历史命令
+            crate::mcp::tools::interaction::commands::add_zhi_history,
+            crate::mcp::tools::interaction::commands::get_zhi_history,
+            crate::mcp::tools::interaction::commands::clear_zhi_history
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

@@ -102,7 +102,7 @@ pub async fn get_mcp_tools_config(state: State<'_, AppState>) -> Result<Vec<MCPT
         icon: "i-carbon-magic-wand text-lg text-indigo-600 dark:text-indigo-400".to_string(),
         icon_bg: "bg-indigo-100 dark:bg-indigo-900".to_string(),
         dark_icon_bg: "dark:bg-indigo-800".to_string(),
-        has_config: false, // 提示词增强没有独立配置面板
+        has_config: true, // 提示词增强有独立配置面板
     });
 
     // 图标工坊工具 - UI 功能工具，始终存在，有配置选项

@@ -32,6 +32,7 @@ interface AppConfig {
 interface Props {
   request: McpRequest | null
   appConfig: AppConfig
+  enhanceEnabled?: boolean
   mockMode?: boolean
   testMode?: boolean
 }
@@ -41,6 +42,7 @@ interface Emits {
   cancel: []
   themeChange: [theme: string]
   openMainLayout: []
+  openMcpToolsTab: []
   toggleAlwaysOnTop: []
   toggleAudioNotification: []
   updateAudioUrl: [url: string]
@@ -53,6 +55,7 @@ interface Emits {
 const props = withDefaults(defineProps<Props>(), {
   mockMode: false,
   testMode: false,
+  enhanceEnabled: false,
 })
 
 const emit = defineEmits<Emits>()
@@ -243,6 +246,48 @@ function resetForm() {
   submitting.value = false
 }
 
+// 构建用户回复摘要（不包含图片原始数据）
+function buildUserReplySummary() {
+  const parts: string[] = []
+  const inputText = userInput.value.trim()
+  if (inputText) {
+    parts.push(`用户输入: ${inputText}`)
+  }
+  if (selectedOptions.value.length > 0) {
+    parts.push(`选项: ${selectedOptions.value.join(', ')}`)
+  }
+  if (draggedImages.value.length > 0) {
+    parts.push(`图片数量: ${draggedImages.value.length}`)
+  }
+  if (parts.length === 0) {
+    parts.push('用户输入: 用户确认继续')
+  }
+  return parts.join('\n')
+}
+
+// 记录 zhi 历史（不影响主流程）
+async function recordZhiHistory() {
+  const projectRoot = props.request?.project_root_path
+  if (!projectRoot) return
+
+  const prompt = props.request?.message || ''
+  const requestId = props.request?.id || ''
+  const userReplySummary = buildUserReplySummary()
+
+  try {
+    await invoke('add_zhi_history', {
+      projectRootPath: projectRoot,
+      requestId,
+      prompt,
+      userReply: userReplySummary,
+      source: 'popup',
+    })
+  }
+  catch (error) {
+    console.warn('记录 zhi 历史失败:', error)
+  }
+}
+
 // 处理提交
 async function handleSubmit() {
   if (!canSubmit.value || submitting.value)
@@ -276,10 +321,14 @@ async function handleSubmit() {
       // 模拟模式下的延迟
       await new Promise(resolve => setTimeout(resolve, 1000))
       message.success('模拟响应发送成功')
+      // 模拟模式下也尝试记录历史（不阻塞）
+      await recordZhiHistory()
     }
     else {
       // 实际发送响应
       await invoke('send_mcp_response', { response })
+      // 发送成功后记录历史
+      await recordZhiHistory()
       await invoke('exit_app')
     }
 
@@ -365,6 +414,12 @@ function handleEnhance() {
   if (submitting.value)
     return
 
+  if (!props.enhanceEnabled) {
+    message.warning('提示词增强未启用，请先在 MCP 工具中启用')
+    emit('openMcpToolsTab')
+    return
+  }
+
   // 检查是否有输入内容
   if (!userInput.value.trim()) {
     message.warning('请先输入要增强的提示词')
@@ -392,6 +447,11 @@ function handleEnhanceConfirm(enhancedPrompt: string) {
 // 处理增强取消
 function handleEnhanceCancel() {
   showEnhanceModal.value = false
+}
+
+// 处理跳转 MCP 工具页
+function handleOpenMcpToolsTab() {
+  emit('openMcpToolsTab')
 }
 </script>
 
@@ -430,7 +490,10 @@ function handleEnhanceCancel() {
       <div class="px-4 pb-3 bg-black select-text">
         <PopupInput
           ref="inputRef" :request="request" :loading="loading" :submitting="submitting"
+          :enhance-enabled="props.enhanceEnabled"
           @update="handleInputUpdate" @image-add="handleImageAdd" @image-remove="handleImageRemove"
+          @enhance="handleEnhance"
+          @open-mcp-tools-tab="handleOpenMcpToolsTab"
         />
       </div>
     </div>
@@ -440,7 +503,9 @@ function handleEnhanceCancel() {
       <PopupActions
         :request="request" :loading="loading" :submitting="submitting" :can-submit="canSubmit"
         :continue-reply-enabled="continueReplyEnabled" :input-status-text="inputStatusText"
+        :enhance-enabled="props.enhanceEnabled"
         @submit="handleSubmit" @continue="handleContinue" @enhance="handleEnhance"
+        @open-mcp-tools-tab="handleOpenMcpToolsTab"
       />
     </div>
 

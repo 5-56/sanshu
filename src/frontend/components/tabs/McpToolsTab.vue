@@ -7,6 +7,11 @@ import { useMcpToolsReactive } from '../../composables/useMcpTools'
 const SouConfig = defineAsyncComponent(() => import('../tools/SouConfig.vue'))
 const Context7Config = defineAsyncComponent(() => import('../tools/Context7Config.vue'))
 const IconWorkshop = defineAsyncComponent(() => import('../tools/IconWorkshop/IconWorkshop.vue'))
+const EnhanceConfig = defineAsyncComponent(() => import('../tools/EnhanceConfig.vue'))
+
+const props = defineProps<{
+  projectRootPath?: string | null
+}>()
 
 // 全局 MCP 工具状态
 const {
@@ -212,6 +217,11 @@ onMounted(async () => {
       <div class="min-h-[400px]">
         <SouConfig v-if="currentToolId === 'sou'" :active="showToolConfigModal" />
         <Context7Config v-else-if="currentToolId === 'context7'" :active="showToolConfigModal" />
+        <EnhanceConfig
+          v-else-if="currentToolId === 'enhance'"
+          :active="showToolConfigModal"
+          :project-root-path="props.projectRootPath"
+        />
         <IconWorkshop v-else-if="currentToolId === 'icon'" :active="showToolConfigModal" />
         <div v-else class="empty-config">
           <div class="i-carbon-settings text-5xl mb-3 opacity-20" />

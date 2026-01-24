@@ -21,6 +21,8 @@ interface AppConfig {
 
 interface Props {
   appConfig: AppConfig
+  activeTab?: string
+  projectRootPath?: string | null
 }
 
 interface Emits {
@@ -33,6 +35,7 @@ interface Emits {
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
   configReloaded: []
+  'update:activeTab': [tab: string]
 }
 
 defineProps<Props>()
@@ -48,6 +51,8 @@ defineEmits<Emits>()
     :window-width="appConfig.window.width"
     :window-height="appConfig.window.height"
     :fixed-window-size="appConfig.window.fixed"
+    :active-tab="activeTab"
+    :project-root-path="projectRootPath || undefined"
     @theme-change="$emit('themeChange', $event)"
     @toggle-always-on-top="$emit('toggleAlwaysOnTop')"
     @toggle-audio-notification="$emit('toggleAudioNotification')"
@@ -57,5 +62,6 @@ defineEmits<Emits>()
     @test-audio-error="$emit('testAudioError', $event)"
     @update-window-size="$emit('updateWindowSize', $event)"
     @config-reloaded="$emit('configReloaded')"
+    @update:active-tab="$emit('update:activeTab', $event)"
   />
 </template>

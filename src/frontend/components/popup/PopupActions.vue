@@ -11,12 +11,14 @@ interface Props {
   connectionStatus?: string
   continueReplyEnabled?: boolean
   inputStatusText?: string
+  enhanceEnabled?: boolean
 }
 
 interface Emits {
   submit: []
   continue: []
   enhance: []
+  openMcpToolsTab: []
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -26,6 +28,7 @@ const props = withDefaults(defineProps<Props>(), {
   connectionStatus: '已连接',
   continueReplyEnabled: true,
   inputStatusText: '',
+  enhanceEnabled: false,
 })
 
 const emit = defineEmits<Emits>()
@@ -94,7 +97,12 @@ function handleContinue() {
 
 function handleEnhance() {
   if (!props.submitting) {
-    emit('enhance')
+    if (props.enhanceEnabled) {
+      emit('enhance')
+    }
+    else {
+      emit('openMcpToolsTab')
+    }
   }
 }
 
@@ -120,8 +128,8 @@ onMounted(() => {
       <!-- 右侧操作按钮 -->
       <div class="flex items-center" data-guide="popup-actions">
         <n-space size="small">
-          <!-- 增强按钮 -->
-          <n-tooltip trigger="hover" placement="top">
+          <!-- 增强按钮 / 启用 CTA -->
+          <n-tooltip v-if="enhanceEnabled" trigger="hover" placement="top">
             <template #trigger>
               <n-button
                 :disabled="!canSubmit || submitting"
@@ -133,10 +141,27 @@ onMounted(() => {
                 <template #icon>
                   <div class="i-carbon-magic-wand w-4 h-4" />
                 </template>
-                增强
+                增强提示词
               </n-button>
             </template>
             {{ enhanceShortcutText }}
+          </n-tooltip>
+          <n-tooltip v-else trigger="hover" placement="top">
+            <template #trigger>
+              <n-button
+                :disabled="submitting"
+                size="medium"
+                type="warning"
+                data-guide="enhance-cta"
+                @click="handleEnhance"
+              >
+                <template #icon>
+                  <div class="i-carbon-launch w-4 h-4" />
+                </template>
+                启用增强
+              </n-button>
+            </template>
+            前往 MCP 工具启用提示词增强
           </n-tooltip>
 
           <!-- 继续按钮 -->

@@ -203,6 +203,31 @@ export const MCP_TOOLS_CONFIG: ToolPromptConfig[] = [
       darkIconBg: 'dark:bg-orange-900',
     },
   },
+
+  // enhance - 提示词增强
+  {
+    id: 'enhance',
+    name: '提示词增强',
+    description: '将口语化提示词增强为结构化专业提示词，支持上下文与历史',
+    prompt: {
+      base: '',
+      whenToUse: [
+        '需要把口语化或模糊提示词改写为清晰、具体、无歧义版本时',
+        '希望结合项目上下文与历史交互提升提示词质量时',
+      ],
+      howToUse: [
+        '提供原始提示词，必要时传入项目路径以启用上下文',
+        '未启用时先在 MCP 工具中启用并配置 acemcp',
+      ],
+    },
+    ui: {
+      enabled: false, // 默认关闭：依赖 acemcp 配置
+      canDisable: true,
+      icon: 'i-carbon-magic-wand text-lg text-indigo-600 dark:text-indigo-400',
+      iconBg: 'bg-indigo-100',
+      darkIconBg: 'dark:bg-indigo-900',
+    },
+  },
 ]
 
 // ----------------------------------------------------------------------------

@@ -12,6 +12,7 @@ interface Props {
   request: McpRequest | null
   loading?: boolean
   submitting?: boolean
+  enhanceEnabled?: boolean
 }
 
 interface Emits {
@@ -22,11 +23,14 @@ interface Emits {
   }]
   imageAdd: [image: string]
   imageRemove: [index: number]
+  enhance: []
+  openMcpToolsTab: []
 }
 
 const props = withDefaults(defineProps<Props>(), {
   loading: false,
   submitting: false,
+  enhanceEnabled: false,
 })
 
 const emit = defineEmits<Emits>()
@@ -204,6 +208,17 @@ function handleImagePaste(event: ClipboardEvent) {
 
   if (hasImage) {
     event.preventDefault()
+  }
+}
+
+// 处理增强入口点击
+function handleEnhanceClick() {
+  if (props.submitting) return
+  if (props.enhanceEnabled) {
+    emit('enhance')
+  }
+  else {
+    emit('openMcpToolsTab')
   }
 }
 
@@ -760,6 +775,26 @@ defineExpose({
         <div class="text-xs text-on-surface-secondary">
           💡 提示：可以在输入框中粘贴图片 ({{ pasteShortcut }})
         </div>
+      </div>
+
+      <!-- 提示词增强入口 -->
+      <div class="flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 text-on-surface-secondary">
+          <div class="i-carbon-magic-wand w-3 h-3 text-primary-500" />
+          <span>{{ enhanceEnabled ? '可一键增强当前提示词' : '提示词增强未启用' }}</span>
+        </div>
+        <n-button
+          size="tiny"
+          :type="enhanceEnabled ? 'info' : 'warning'"
+          secondary
+          :disabled="submitting || (enhanceEnabled && !canSubmit)"
+          @click="handleEnhanceClick"
+        >
+          <template #icon>
+            <div :class="enhanceEnabled ? 'i-carbon-magic-wand' : 'i-carbon-launch'" />
+          </template>
+          {{ enhanceEnabled ? '增强提示词' : '启用增强' }}
+        </n-button>
       </div>
 
       <!-- 文本输入框 -->
