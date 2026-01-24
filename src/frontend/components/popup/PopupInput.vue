@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useSortable } from '@vueuse/integrations/useSortable'
+import { useIntersectionObserver, useStorage } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useKeyboard } from '../../composables/useKeyboard'
@@ -39,7 +40,7 @@ const emit = defineEmits<Emits>()
 const userInput = ref('')
 const selectedOptions = ref<string[]>([])
 const uploadedImages = ref<string[]>([])
-const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const textareaRef = ref<any | null>(null)
 
 // 自定义prompt相关状态
 const customPrompts = ref<CustomPrompt[]>([])
@@ -147,6 +148,26 @@ const statusText = computed(() => {
 
   return '等待输入...'
 })
+
+// 悬浮/固定相关状态
+const isFloating = useStorage('popup-input-floating', false) // 开启/关闭悬浮模式
+const sentinelRef = ref<HTMLElement | null>(null) // 哨兵元素
+const isSticking = ref(false) // 当前是否处于吸附状态
+
+// 监听哨兵可见性以判断是否吸附
+// 逻辑：当我们在页面上方时，底部的哨兵(sentinel)在视口下方不可见 -> isIntersecting=false -> isSticking=true
+// 当我们滚到底部时，哨兵进入视口 -> isIntersecting=true -> isSticking=false
+useIntersectionObserver(
+  sentinelRef,
+  ([{ isIntersecting }]) => {
+    isSticking.value = !isIntersecting
+  },
+  { threshold: 0.1 } 
+)
+
+function toggleFloating() {
+  isFloating.value = !isFloating.value
+}
 
 // 发送更新事件
 function emitUpdate() {
@@ -399,7 +420,7 @@ async function handleConditionalToggle(promptId: string, value: boolean) {
   }
   catch (error) {
     console.error('保存条件性prompt状态失败:', error)
-    message.error(`保存设置失败: ${(error as any)?.message}` || error)
+    message.error(`保存设置失败: ${(error as any)?.message || String(error)}`)
 
     // 回滚本地状态
     if (prompt) {
@@ -703,112 +724,145 @@ defineExpose({
     </div>
 
     <!-- 文本输入区域 -->
-    <div v-if="!loading" class="space-y-3">
-      <h4 class="text-sm font-medium text-white">
-        {{ hasOptions ? '补充说明 (可选)' : '请输入您的回复' }}
-      </h4>
+    <div v-if="!loading">
+      <!-- 哨兵元素：用于检测是否到底部 -->
+      <div ref="sentinelRef" class="w-full h-px opacity-0 pointer-events-none absolute -mt-1" />
 
-      <!-- 自定义prompt按钮区域 -->
-      <div v-if="customPromptEnabled && customPrompts.length > 0" class="space-y-2" data-guide="custom-prompts">
-        <div class="text-xs text-on-surface-secondary flex items-center gap-2">
-          <div class="i-carbon-bookmark w-3 h-3 text-primary-500" />
-          <span>快捷模板 (拖拽调整顺序):</span>
-        </div>
-        <div
-          ref="promptContainer"
-          data-prompt-container
-          class="flex flex-wrap gap-2"
-        >
-          <div
-            v-for="prompt in sortablePrompts"
-            :key="prompt.id"
-            :title="prompt.description || (prompt.content.trim() ? prompt.content : '清空输入框')"
-            class="inline-flex items-center gap-1 px-2 py-1 text-xs bg-container-secondary hover:bg-container-tertiary rounded transition-all duration-200 select-none border border-gray-600 text-on-surface sortable-item"
+      <div
+        :class="[
+          'transition-all duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)]',
+          isFloating ? 'sticky bottom-0 z-[50]' : 'relative',
+          (isFloating && isSticking)
+            ? 'bg-surface/85 backdrop-blur-xl shadow-[0_-8px_30px_rgba(0,0,0,0.15)] border-t border-white/10 pb-5 pt-4 px-3 -mx-3 mb-0'
+            : 'space-y-3',
+        ]"
+      >
+        <!-- 标题栏 & 切换按钮 -->
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-sm font-medium text-white">
+            {{ hasOptions ? '补充说明 (可选)' : '请输入您的回复' }}
+          </h4>
+          <n-button
+            text
+            size="tiny"
+            class="opacity-70 hover:opacity-100 transition-opacity"
+            :title="isFloating ? '取消悬浮 (跟随底部)' : '开启悬浮 (固定底部)'"
+            @click="toggleFloating"
           >
-            <!-- 拖拽手柄 -->
-            <div class="drag-handle cursor-move p-0.5 rounded hover:bg-container-tertiary transition-colors">
-              <div class="i-carbon-drag-horizontal w-3 h-3 text-on-surface-secondary" />
-            </div>
+            <template #icon>
+              <div
+                :class="[
+                  'transition-transform duration-300',
+                  isFloating ? 'i-carbon-pin-filled text-primary-500 rotate-0' : 'i-carbon-pin text-on-surface-secondary -rotate-45',
+                ]"
+              />
+            </template>
+          </n-button>
+        </div>
 
-            <!-- 按钮内容 -->
+        <!-- 自定义prompt按钮区域 -->
+        <div v-if="customPromptEnabled && customPrompts.length > 0" class="space-y-2" data-guide="custom-prompts">
+          <div class="text-xs text-on-surface-secondary flex items-center gap-2">
+            <div class="i-carbon-bookmark w-3 h-3 text-primary-500" />
+            <span>快捷模板 (拖拽调整顺序):</span>
+          </div>
+          <div
+            ref="promptContainer"
+            data-prompt-container
+            class="flex flex-wrap gap-2"
+          >
             <div
-              class="inline-flex items-center cursor-pointer"
-              @click="handlePromptClick(prompt)"
+              v-for="prompt in sortablePrompts"
+              :key="prompt.id"
+              :title="prompt.description || (prompt.content.trim() ? prompt.content : '清空输入框')"
+              class="inline-flex items-center gap-1 px-2 py-1 text-xs bg-container-secondary hover:bg-container-tertiary rounded transition-all duration-200 select-none border border-gray-600 text-on-surface sortable-item"
             >
-              <span>{{ prompt.name }}</span>
+              <!-- 拖拽手柄 -->
+              <div class="drag-handle cursor-move p-0.5 rounded hover:bg-container-tertiary transition-colors">
+                <div class="i-carbon-drag-horizontal w-3 h-3 text-on-surface-secondary" />
+              </div>
+
+              <!-- 按钮内容 -->
+              <div
+                class="inline-flex items-center cursor-pointer"
+                @click="handlePromptClick(prompt)"
+              >
+                <span>{{ prompt.name }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- 上下文追加区域 -->
-      <div v-if="customPromptEnabled && conditionalPrompts.length > 0" class="space-y-2" data-guide="context-append">
-        <div class="text-xs text-on-surface-secondary flex items-center gap-2">
-          <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
-          <span>上下文追加:</span>
+        <!-- 上下文追加区域 -->
+        <div v-if="customPromptEnabled && conditionalPrompts.length > 0" class="space-y-2" data-guide="context-append">
+          <div class="text-xs text-on-surface-secondary flex items-center gap-2">
+            <div class="i-carbon-settings-adjust w-3 h-3 text-primary-500" />
+            <span>上下文追加:</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div
+              v-for="prompt in conditionalPrompts"
+              :key="prompt.id"
+              class="flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 hover:bg-container-tertiary transition-colors text-xs"
+            >
+              <div class="flex-1 min-w-0 mr-2">
+                <div class="text-xs text-on-surface truncate font-medium" :title="prompt.condition_text || prompt.name">
+                  {{ prompt.condition_text || prompt.name }}
+                </div>
+                <div v-if="getConditionalDescription(prompt)" class="text-xs text-primary-600 dark:text-primary-400 opacity-50 dark:opacity-60 mt-0.5 truncate leading-tight" :title="getConditionalDescription(prompt)">
+                  {{ getConditionalDescription(prompt) }}
+                </div>
+              </div>
+              <n-switch
+                :value="prompt.current_state ?? false"
+                size="small"
+                @update:value="(value: boolean) => handleConditionalToggle(prompt.id, value)"
+              />
+            </div>
+          </div>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div
-            v-for="prompt in conditionalPrompts"
-            :key="prompt.id"
-            class="flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 hover:bg-container-tertiary transition-colors text-xs"
+
+        <!-- 图片提示区域 -->
+        <div v-if="uploadedImages.length === 0" class="text-center">
+          <div class="text-xs text-on-surface-secondary">
+            💡 提示：可以在输入框中粘贴图片 ({{ pasteShortcut }})
+          </div>
+        </div>
+
+        <!-- 提示词增强入口 -->
+        <div class="flex items-center justify-between text-xs my-2">
+          <div class="flex items-center gap-2 text-on-surface-secondary">
+            <div class="i-carbon-magic-wand w-3 h-3 text-primary-500" />
+            <span>{{ enhanceEnabled ? '可一键增强当前提示词' : '提示词增强未启用' }}</span>
+          </div>
+          <n-button
+            size="tiny"
+            :type="enhanceEnabled ? 'info' : 'warning'"
+            secondary
+            :disabled="submitting || (enhanceEnabled && !canSubmit)"
+            @click="handleEnhanceClick"
           >
-            <div class="flex-1 min-w-0 mr-2">
-              <div class="text-xs text-on-surface truncate font-medium" :title="prompt.condition_text || prompt.name">
-                {{ prompt.condition_text || prompt.name }}
-              </div>
-              <div v-if="getConditionalDescription(prompt)" class="text-xs text-primary-600 dark:text-primary-400 opacity-50 dark:opacity-60 mt-0.5 truncate leading-tight" :title="getConditionalDescription(prompt)">
-                {{ getConditionalDescription(prompt) }}
-              </div>
-            </div>
-            <n-switch
-              :value="prompt.current_state ?? false"
-              size="small"
-              @update:value="(value: boolean) => handleConditionalToggle(prompt.id, value)"
-            />
-          </div>
+            <template #icon>
+              <div :class="enhanceEnabled ? 'i-carbon-magic-wand' : 'i-carbon-launch'" />
+            </template>
+            {{ enhanceEnabled ? '增强提示词' : '启用增强' }}
+          </n-button>
         </div>
-      </div>
 
-      <!-- 图片提示区域 -->
-      <div v-if="uploadedImages.length === 0" class="text-center">
-        <div class="text-xs text-on-surface-secondary">
-          💡 提示：可以在输入框中粘贴图片 ({{ pasteShortcut }})
-        </div>
+        <!-- 文本输入框 -->
+        <n-input
+          ref="textareaRef"
+          v-model:value="userInput"
+          type="textarea"
+          size="small"
+          :placeholder="hasOptions ? `您可以在这里添加补充说明... (支持粘贴图片 ${pasteShortcut})` : `请输入您的回复... (支持粘贴图片 ${pasteShortcut})`"
+          :disabled="submitting"
+          :autosize="{ minRows: 3, maxRows: 6 }"
+          data-guide="popup-input"
+          class="shadow-sm"
+          @paste="handleImagePaste"
+        />
       </div>
-
-      <!-- 提示词增强入口 -->
-      <div class="flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 text-on-surface-secondary">
-          <div class="i-carbon-magic-wand w-3 h-3 text-primary-500" />
-          <span>{{ enhanceEnabled ? '可一键增强当前提示词' : '提示词增强未启用' }}</span>
-        </div>
-        <n-button
-          size="tiny"
-          :type="enhanceEnabled ? 'info' : 'warning'"
-          secondary
-          :disabled="submitting || (enhanceEnabled && !canSubmit)"
-          @click="handleEnhanceClick"
-        >
-          <template #icon>
-            <div :class="enhanceEnabled ? 'i-carbon-magic-wand' : 'i-carbon-launch'" />
-          </template>
-          {{ enhanceEnabled ? '增强提示词' : '启用增强' }}
-        </n-button>
-      </div>
-
-      <!-- 文本输入框 -->
-      <n-input
-        ref="textareaRef"
-        v-model:value="userInput"
-        type="textarea"
-        size="small"
-        :placeholder="hasOptions ? `您可以在这里添加补充说明... (支持粘贴图片 ${pasteShortcut})` : `请输入您的回复... (支持粘贴图片 ${pasteShortcut})`"
-        :disabled="submitting"
-        :autosize="{ minRows: 3, maxRows: 6 }"
-        data-guide="popup-input"
-        @paste="handleImagePaste"
-      />
     </div>
 
     <!-- 插入模式选择对话框 -->
