@@ -23,6 +23,8 @@ export interface CustomPrompt {
   template_true?: string // 开关为true时的模板
   template_false?: string // 开关为false时的模板
   current_state?: boolean // 当前开关状态
+  // MCP 工具联动字段
+  linked_mcp_tool?: string // 关联的 MCP 工具 ID（仅对 conditional 类型有效）
 }
 
 // 自定义prompt配置

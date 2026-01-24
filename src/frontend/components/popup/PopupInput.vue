@@ -8,6 +8,7 @@ import { useIntersectionObserver, useStorage } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useKeyboard } from '../../composables/useKeyboard'
+import { useMcpToolsReactive } from '../../composables/useMcpTools'
 
 interface Props {
   request: McpRequest | null
@@ -58,6 +59,23 @@ const normalPrompts = computed(() =>
 const conditionalPrompts = computed(() =>
   customPrompts.value.filter(prompt => prompt.type === 'conditional'),
 )
+
+// MCP 工具状态管理
+const { mcpTools, loadMcpTools } = useMcpToolsReactive()
+
+// 检查关联的 MCP 工具是否启用
+function isMcpToolEnabled(toolId?: string): boolean {
+  if (!toolId) return true // 没有关联工具时默认可用
+  const tool = mcpTools.value.find(t => t.id === toolId)
+  return tool?.enabled ?? false
+}
+
+// 获取 MCP 工具名称（用于提示文案）
+function getMcpToolName(toolId?: string): string {
+  if (!toolId) return ''
+  const tool = mcpTools.value.find(t => t.id === toolId)
+  return tool?.name ?? toolId
+}
 
 // 拖拽排序相关状态
 const promptContainer = ref<HTMLElement | null>(null)
@@ -591,6 +609,9 @@ async function setupWindowMoveListener() {
 onMounted(async () => {
   console.log('组件挂载，开始加载prompt')
   await loadCustomPrompts()
+  
+  // 加载 MCP 工具配置（用于检查关联工具状态）
+  await loadMcpTools()
 
   // 监听自定义prompt更新事件
   unlistenCustomPromptUpdate = await listen('custom-prompt-updated', () => {
@@ -803,7 +824,10 @@ defineExpose({
             <div
               v-for="prompt in conditionalPrompts"
               :key="prompt.id"
-              class="flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 hover:bg-container-tertiary transition-colors text-xs"
+              :class="[
+                'flex items-center justify-between p-2 bg-container-secondary rounded border border-gray-600 transition-colors text-xs',
+                isMcpToolEnabled(prompt.linked_mcp_tool) ? 'hover:bg-container-tertiary' : 'opacity-50 cursor-not-allowed'
+              ]"
             >
               <div class="flex-1 min-w-0 mr-2">
                 <div class="text-xs text-on-surface truncate font-medium" :title="prompt.condition_text || prompt.name">
@@ -813,11 +837,18 @@ defineExpose({
                   {{ getConditionalDescription(prompt) }}
                 </div>
               </div>
-              <n-switch
-                :value="prompt.current_state ?? false"
-                size="small"
-                @update:value="(value: boolean) => handleConditionalToggle(prompt.id, value)"
-              />
+              <!-- 使用 n-tooltip 包裹开关，当 MCP 工具未启用时显示提示 -->
+              <n-tooltip :disabled="isMcpToolEnabled(prompt.linked_mcp_tool) || !prompt.linked_mcp_tool">
+                <template #trigger>
+                  <n-switch
+                    :value="prompt.current_state ?? false"
+                    size="small"
+                    :disabled="!isMcpToolEnabled(prompt.linked_mcp_tool)"
+                    @update:value="(value: boolean) => handleConditionalToggle(prompt.id, value)"
+                  />
+                </template>
+                请先在设置中开启「{{ getMcpToolName(prompt.linked_mcp_tool) }}」MCP 工具
+              </n-tooltip>
             </div>
           </div>
         </div>

@@ -158,6 +158,10 @@ pub struct CustomPrompt {
     pub template_false: Option<String>,    // 开关为false时的模板
     #[serde(default = "default_prompt_state")]
     pub current_state: bool,               // 当前开关状态（原default_state）
+    /// 关联的 MCP 工具 ID（仅对 conditional 类型有效）
+    /// 当此字段有值时，该 prompt 的可用性取决于对应 MCP 工具的启用状态
+    #[serde(default)]
+    pub linked_mcp_tool: Option<String>,
 }
 
 // 自定义prompt配置
@@ -548,6 +552,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_2".to_string(),
@@ -562,6 +567,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_3".to_string(),
@@ -576,6 +582,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_4".to_string(),
@@ -590,6 +597,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_5".to_string(),
@@ -604,6 +612,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_6".to_string(),
@@ -618,6 +627,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: None,
             template_false: None,
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_7".to_string(),
@@ -632,6 +642,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，帮我生成总结性Markdown文档".to_string()),
             template_false: Some("❌请记住，不要生成总结性Markdown文档".to_string()),
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_8".to_string(),
@@ -646,6 +657,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，帮我生成测试脚本".to_string()),
             template_false: Some("❌请记住，不要生成测试脚本".to_string()),
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_9".to_string(),
@@ -660,6 +672,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，帮我编译".to_string()),
             template_false: Some("❌请记住，不要编译，用户自己编译".to_string()),
             current_state: false,
+            linked_mcp_tool: None,
         },
         CustomPrompt {
             id: "default_10".to_string(),
@@ -674,6 +687,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，帮我运行".to_string()),
             template_false: Some("❌请记住，不要运行，用户自己运行".to_string()),
             current_state: false,
+            linked_mcp_tool: None,
         },
         // MCP 功能性工具联动 prompt
         CustomPrompt {
@@ -689,6 +703,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，使用 sou 进行代码语义搜索，根据结果到指定位置查看更多上下文".to_string()),
             template_false: Some("".to_string()),
             current_state: false, // 默认关闭（与 TOOL_SOU 默认状态保持一致）
+            linked_mcp_tool: Some("sou".to_string()), // 关联到 sou MCP 工具
         },
         CustomPrompt {
             id: "default_12".to_string(),
@@ -703,6 +718,7 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_true: Some("✔️请记住，使用 context7 查询框架/库的最新官方文档和 API 用法".to_string()),
             template_false: Some("".to_string()),
             current_state: true, // 默认开启（与 TOOL_CONTEXT7 默认状态保持一致）
+            linked_mcp_tool: Some("context7".to_string()), // 关联到 context7 MCP 工具
         },
     ]
 }
