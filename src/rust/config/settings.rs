@@ -675,6 +675,35 @@ pub fn default_custom_prompts() -> Vec<CustomPrompt> {
             template_false: Some("❌请记住，不要运行，用户自己运行".to_string()),
             current_state: false,
         },
+        // MCP 功能性工具联动 prompt
+        CustomPrompt {
+            id: "default_11".to_string(),
+            name: "是否启用代码搜索工具".to_string(),
+            content: "".to_string(),
+            description: Some("控制 sou 代码语义搜索工具的使用".to_string()),
+            sort_order: 11,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            r#type: "conditional".to_string(),
+            condition_text: Some("是否启用代码搜索工具".to_string()),
+            template_true: Some("✔️请记住，使用 sou 进行代码语义搜索，根据结果到指定位置查看更多上下文".to_string()),
+            template_false: Some("".to_string()),
+            current_state: false, // 默认关闭（与 TOOL_SOU 默认状态保持一致）
+        },
+        CustomPrompt {
+            id: "default_12".to_string(),
+            name: "是否启用框架文档查询".to_string(),
+            content: "".to_string(),
+            description: Some("控制 context7 框架文档查询工具的使用".to_string()),
+            sort_order: 12,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            r#type: "conditional".to_string(),
+            condition_text: Some("是否启用框架文档查询".to_string()),
+            template_true: Some("✔️请记住，使用 context7 查询框架/库的最新官方文档和 API 用法".to_string()),
+            template_false: Some("".to_string()),
+            current_state: true, // 默认开启（与 TOOL_CONTEXT7 默认状态保持一致）
+        },
     ]
 }
 
