@@ -325,11 +325,11 @@ jobs:
 
           echo "📝 Updating README with version: $VERSION_NUMBER (tag: $TAG_NAME)"
 
-          # 更新版本信息行
-          sed -i "s|> **📋 版本信息**：当前最新版本 v[0-9.]* | 上次更新：.*|> **📋 版本信息**：当前最新版本 ${VERSION_NUMBER} | 上次更新：${DATE}|g" README.md
+          # 使用不冲突分隔符并匹配可选 v 前缀，避免 sed 解析错误
+          sed -i -E "s#^> \\*\\*📋 版本信息\\*\\*：当前最新版本 v?[0-9.]+ \\| 上次更新：.*#> **📋 版本信息**：当前最新版本 ${VERSION_NUMBER} | 上次更新：${DATE}#g" README.md
 
-          # 更新下载链接中的版本号（包括URL路径和文件名）
-          sed -i "s|v[0-9.]\+/sanshu-cli-v[0-9.]*-|${TAG_NAME}/sanshu-cli-${VERSION_NUMBER}-|g" README.md
+          # 下载链接中同时更新 tag 路径和文件名里的版本号
+          sed -i -E "s#v[0-9.]+/sanshu-cli-v[0-9.]+-#${TAG_NAME}/sanshu-cli-${TAG_NAME}-#g" README.md
 
           # 显示更改
           echo "=== README changes ==="
