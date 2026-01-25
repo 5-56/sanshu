@@ -62,6 +62,40 @@ async function checkVersion() {
   }
 }
 
+// 功能亮点配置 (高定美学配色)
+const features = [
+  {
+    label: '智能交互',
+    icon: 'i-carbon-chat',
+    colorClass: '!bg-blue-50 !text-blue-600 !border-blue-200 dark:!bg-blue-900/30 dark:!text-blue-300 dark:!border-blue-700/50',
+  },
+  {
+    label: '全局记忆',
+    icon: 'i-carbon-data-base',
+    colorClass: '!bg-violet-50 !text-violet-600 !border-violet-200 dark:!bg-violet-900/30 dark:!text-violet-300 dark:!border-violet-700/50',
+  },
+  {
+    label: '语义搜索',
+    icon: 'i-carbon-search',
+    colorClass: '!bg-emerald-50 !text-emerald-600 !border-emerald-200 dark:!bg-emerald-900/30 dark:!text-emerald-300 dark:!border-emerald-700/50',
+  },
+  {
+    label: '框架文档',
+    icon: 'i-carbon-document',
+    colorClass: '!bg-orange-50 !text-orange-600 !border-orange-200 dark:!bg-orange-900/30 dark:!text-orange-300 dark:!border-orange-700/50',
+  },
+  {
+    label: 'UI/UX 设计',
+    icon: 'i-carbon-paint-brush',
+    colorClass: '!bg-pink-50 !text-pink-600 !border-pink-200 dark:!bg-pink-900/30 dark:!text-pink-300 dark:!border-pink-700/50',
+  },
+  {
+    label: '图标工坊',
+    icon: 'i-carbon-image',
+    colorClass: '!bg-indigo-50 !text-indigo-600 !border-indigo-200 dark:!bg-indigo-900/30 dark:!text-indigo-300 dark:!border-indigo-700/50',
+  },
+]
+
 // 组件挂载时初始化版本信息
 onMounted(async () => {
   try {
@@ -120,43 +154,21 @@ onMounted(async () => {
     </div>
 
     <!-- 功能亮点标签云 -->
-    <div class="py-2 border-b border-gray-100 dark:border-gray-700">
+    <div class="py-3 border-b border-gray-100 dark:border-gray-700">
       <n-space size="small" :wrap="true">
-        <n-tag size="small" :bordered="false" type="info">
+        <n-tag
+          v-for="feature in features"
+          :key="feature.label"
+          size="small"
+          :bordered="true"
+          round
+          class="transition-colors duration-300"
+          :class="feature.colorClass"
+        >
           <template #icon>
-            <div class="i-carbon-chat text-xs" />
+            <div :class="[feature.icon, 'text-xs']" />
           </template>
-          智能交互
-        </n-tag>
-        <n-tag size="small" :bordered="false" type="success">
-          <template #icon>
-            <div class="i-carbon-data-base text-xs" />
-          </template>
-          全局记忆
-        </n-tag>
-        <n-tag size="small" :bordered="false" type="warning">
-          <template #icon>
-            <div class="i-carbon-search text-xs" />
-          </template>
-          语义搜索
-        </n-tag>
-        <n-tag size="small" :bordered="false" type="error">
-          <template #icon>
-            <div class="i-carbon-document text-xs" />
-          </template>
-          框架文档
-        </n-tag>
-        <n-tag size="small" :bordered="false" type="primary">
-          <template #icon>
-            <div class="i-carbon-paint-brush text-xs" />
-          </template>
-          UI/UX 设计
-        </n-tag>
-        <n-tag size="small" :bordered="false" type="default">
-          <template #icon>
-            <div class="i-carbon-image text-xs" />
-          </template>
-          图标工坊
+          {{ feature.label }}
         </n-tag>
       </n-space>
     </div>
