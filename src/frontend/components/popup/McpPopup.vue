@@ -496,10 +496,16 @@ function handleOpenMcpToolsTab() {
     >
       <n-tooltip trigger="hover" placement="bottom">
         <template #trigger>
-          <div class="flex items-center gap-2 text-xs cursor-help">
-            <div :class="[policyStatus.icon, policyStatus.colorClass]" class="w-4 h-4" />
-            <span class="text-white/80">上下文策略：</span>
-            <span :class="policyStatus.colorClass" class="font-medium">{{ policyStatus.label }}</span>
+          <div class="flex flex-col gap-1 text-xs cursor-help">
+            <div class="flex items-center gap-2">
+              <div :class="[policyStatus.icon, policyStatus.colorClass]" class="w-4 h-4" />
+              <span class="text-white/80">上下文策略：</span>
+              <span :class="policyStatus.colorClass" class="font-medium">{{ policyStatus.label }}</span>
+            </div>
+            <!-- 未追加时直接展示原因，减少误解 -->
+            <div v-if="!policyStatus.allowed" class="text-[11px] text-white/70">
+              {{ policyStatus.reason }}
+            </div>
           </div>
         </template>
         <div class="text-xs space-y-1 max-w-[280px]">

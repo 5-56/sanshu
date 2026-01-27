@@ -98,12 +98,8 @@ export function getContextPolicyStatus(request?: McpRequest | null): ContextPoli
  */
 export function shouldShowPolicyIndicator(request?: McpRequest | null): boolean {
   if (!request) return false
-  // 存在明确意图 或 策略非自动 或 存在原因说明
-  return (
-    (request.uiux_intent && request.uiux_intent !== 'none') ||
-    (request.uiux_context_policy && request.uiux_context_policy !== 'auto') ||
-    !!request.uiux_reason
-  )
+  // 只要显式传入 UI/UX 上下文信号，就展示指示器，避免默认值掩盖未追加原因
+  return !!request.uiux_intent || !!request.uiux_context_policy || !!request.uiux_reason
 }
 
 // 复用条件性 prompt 的上下文拼接逻辑，保持与弹窗输入一致
