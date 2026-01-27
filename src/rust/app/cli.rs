@@ -1,4 +1,6 @@
 use crate::config::load_standalone_telegram_config;
+use crate::mcp::types::PopupRequest;
+use crate::mcp::utils::generate_request_id;
 use crate::telegram::handle_telegram_only_mcp_request;
 use crate::log_important;
 use crate::app::builder::run_tauri_app;
@@ -25,10 +27,19 @@ pub fn handle_cli_args() -> Result<()> {
                 }
             }
         }
-        // 多参数：MCP请求模式或图标搜索模式
+        // 多参数：MCP请求模式、CLI交互模式或图标搜索模式
         _ => {
-            if args[1] == "--mcp-request" && args.len() >= 3 {
-                handle_mcp_request(&args[2])?;
+            if args[1] == "--mcp-request" {
+                if args.len() >= 3 {
+                    handle_mcp_request(&args[2])?;
+                } else {
+                    eprintln!("缺少必填参数: --mcp-request <文件>");
+                    print_help();
+                    std::process::exit(2);
+                }
+            } else if args[1] == "--cli" {
+                // CLI 模式：解析参数并启动 GUI 交互
+                handle_cli_mode(&args[2..])?;
             } else if args[1] == "--icon-search" {
                 // 图标搜索模式：解析参数并启动 GUI
                 handle_icon_search(&args[2..])?;
@@ -41,6 +52,126 @@ pub fn handle_cli_args() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 处理 CLI 交互模式
+///
+/// 解析参数并设置环境变量，启动 GUI 进入 zhi 交互模式
+fn handle_cli_mode(args: &[String]) -> Result<()> {
+    // 解析参数
+    let mut message: Option<String> = None;
+    let mut options: Vec<String> = Vec::new();
+    let mut is_markdown = true;
+    let mut project_root: Option<String> = None;
+    let mut uiux_intent: Option<String> = None;
+    let mut uiux_context_policy: Option<String> = None;
+    let mut uiux_reason: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--message" | "-m" if i + 1 < args.len() => {
+                message = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--options" | "-o" if i + 1 < args.len() => {
+                let raw = args[i + 1].clone();
+                options.extend(split_cli_options(&raw));
+                i += 2;
+            }
+            "--option" if i + 1 < args.len() => {
+                options.push(args[i + 1].clone());
+                i += 2;
+            }
+            "--markdown" => {
+                is_markdown = true;
+                i += 1;
+            }
+            "--no-markdown" => {
+                is_markdown = false;
+                i += 1;
+            }
+            "--project-root" if i + 1 < args.len() => {
+                project_root = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--uiux-intent" if i + 1 < args.len() => {
+                uiux_intent = Some(args[i + 1].to_lowercase());
+                i += 2;
+            }
+            "--uiux-context-policy" if i + 1 < args.len() => {
+                uiux_context_policy = Some(args[i + 1].to_lowercase());
+                i += 2;
+            }
+            "--uiux-reason" if i + 1 < args.len() => {
+                uiux_reason = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            _ => {
+                eprintln!("无效的命令行参数: {}", args[i]);
+                print_help();
+                std::process::exit(2);
+            }
+        }
+    }
+
+    // 校验必填参数
+    let message = match message {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => {
+            eprintln!("缺少必填参数: --message");
+            print_help();
+            std::process::exit(2);
+        }
+    };
+
+    // 严格校验 UI/UX 参数
+    if let Some(ref intent) = uiux_intent {
+        if !matches!(
+            intent.as_str(),
+            "none" | "beautify" | "page_refactor" | "uiux_search"
+        ) {
+            eprintln!("无效的 --uiux-intent: {}", intent);
+            std::process::exit(2);
+        }
+    }
+    if let Some(ref policy) = uiux_context_policy {
+        if !matches!(policy.as_str(), "auto" | "force" | "forbid") {
+            eprintln!("无效的 --uiux-context-policy: {}", policy);
+            std::process::exit(2);
+        }
+    }
+
+    // 构建请求并写入环境变量，供前端读取
+    let request = PopupRequest {
+        id: generate_request_id(),
+        message,
+        predefined_options: if options.is_empty() { None } else { Some(options) },
+        is_markdown,
+        project_root_path: project_root,
+        uiux_intent,
+        uiux_context_policy,
+        uiux_reason,
+    };
+    let request_json = serde_json::to_string(&request)?;
+    std::env::set_var("SANSHU_CLI_MODE", "true");
+    std::env::set_var("SANSHU_CLI_REQUEST", request_json);
+
+    // 启动 GUI 进入交互模式
+    run_tauri_app();
+    Ok(())
+}
+
+/// 拆分 CLI 选项列表
+fn split_cli_options(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// 处理MCP请求
@@ -138,9 +269,20 @@ fn print_help() {
     println!("用法:");
     println!("  等一下                              启动设置界面");
     println!("  等一下 --mcp-request <文件>          处理 MCP 请求");
+    println!("  等一下 --cli [选项]                  命令行独立调用 zhi 交互");
     println!("  等一下 --icon-search [选项]          打开图标选择界面");
     println!("  等一下 --help                       显示此帮助信息");
     println!("  等一下 --version                    显示版本信息");
+    println!();
+    println!("CLI 交互选项:");
+    println!("  --message, -m <内容>                 必填，弹窗消息");
+    println!("  --options, -o <选项1,选项2>           预定义选项（逗号分隔）");
+    println!("  --option <选项>                      预定义选项（可重复）");
+    println!("  --markdown / --no-markdown           是否按 Markdown 渲染（默认开启）");
+    println!("  --project-root <路径>                项目根目录");
+    println!("  --uiux-intent <值>                   none/beautify/page_refactor/uiux_search");
+    println!("  --uiux-context-policy <值>           auto/force/forbid");
+    println!("  --uiux-reason <内容>                  UI/UX 上下文追加原因");
     println!();
     println!("图标搜索选项:");
     println!("  --query <关键词>      预设搜索关键词");

@@ -475,6 +475,33 @@ sanshu --version
 >   }
 >   ```
 
+### 命令行独立调用
+
+在无法使用 MCP 的环境中（如纯终端或 CI 流程），可以直接调用 `等一下.exe` 发起 zhi 交互弹窗。
+
+**示例：**
+
+```bash
+等一下.exe --cli --message "请选择发布策略" --options "灰度发布,全量发布" --markdown --project-root "D:/repo"
+```
+
+**参数列表：**
+- `--cli`：命令行交互模式标识
+- `--message` / `-m`：必填，弹窗消息内容
+- `--options` / `-o`：可选，逗号分隔的预定义选项
+- `--option`：可选，单个选项（可重复）
+- `--markdown` / `--no-markdown`：可选，是否按 Markdown 渲染（默认 `true`）
+- `--project-root`：可选，项目根目录路径
+- `--uiux-intent`：可选，`none/beautify/page_refactor/uiux_search`
+- `--uiux-context-policy`：可选，`auto/force/forbid`
+- `--uiux-reason`：可选，UI/UX 上下文追加原因
+
+**输出规则：**
+- stdout 输出结构化 JSON（便于脚本解析）
+- stderr 输出人类可读提示/错误
+- 用户取消：stdout 输出 `{"cancelled": true}`，退出码 2
+- 参数错误：stderr 提示，退出码 2
+
 #### 方式二：从源码构建
 
 <div align="center">

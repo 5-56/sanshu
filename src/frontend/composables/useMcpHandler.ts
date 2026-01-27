@@ -133,6 +133,15 @@ export function useMcpHandler() {
         }
         return { isMcp: true, mcpContent: content, isIconMode: false, iconParams: null }
       }
+
+      // 检查是否为 CLI 交互模式
+      if (args?.cli_request) {
+        const content = args.cli_request
+        if (content) {
+          await showMcpDialog(content)
+        }
+        return { isMcp: true, mcpContent: content, isIconMode: false, iconParams: null }
+      }
     }
     catch (error) {
       console.error('检查MCP模式失败:', error)

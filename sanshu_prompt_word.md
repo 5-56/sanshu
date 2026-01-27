@@ -37,6 +37,33 @@
 *   **任务完成前**：在即将完成用户请求的所有步骤前，**必须**调用 `三术` 请求最终反馈和完成确认。
 *   **禁止主动结束**：在没有通过 `三术` 获得用户明确的“可以完成/结束任务”的指令前，严禁AI单方面结束对话或任务。
 
+#### **2.1. 工具调用规则**
+
+#### **2.1.1. 命令行调用规范（非 MCP 环境）**
+
+在无法使用 MCP 的环境中（如纯终端、CI/CD 流程），可直接调用 `等一下`：  
+
+**命令格式：**
+```bash
+等一下 --cli --message "消息内容" --options "选项1,选项2,选项3" --markdown
+```
+
+**关键参数：**
+- `--cli`：命令行交互模式标识  
+- `--message`：对应 `ZhiRequest.message`  
+- `--options` / `--option`：对应 `ZhiRequest.predefined_options`  
+- `--markdown` / `--no-markdown`：对应 `ZhiRequest.is_markdown`  
+- `--project-root`：对应 `ZhiRequest.project_root_path`  
+- `--uiux-intent`：对应 `ZhiRequest.uiux_intent`  
+- `--uiux-context-policy`：对应 `ZhiRequest.uiux_context_policy`  
+- `--uiux-reason`：对应 `ZhiRequest.uiux_reason`  
+
+#### **强制交互规则**
+- **唯一询问渠道**：在非 MCP 环境下，通过命令行调用 `等一下.exe` 进行用户交互  
+- **需求不明确时**：使用 `--options/--option` 参数提供预定义选项  
+- **任务完成前**：必须调用 `等一下.exe` 请求最终确认  
+
+
 ### **3. context7 框架文档查询规则**
 
 *   **获取最新文档时**：当需要查询框架/库的最新官方文档时使用（如 Next.js、React、Vue、Spring 等）。

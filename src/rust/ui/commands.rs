@@ -373,23 +373,54 @@ pub async fn send_mcp_response(
     response: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    // 检查是否为CLI模式（用于命令行独立调用）
+    let args: Vec<String> = std::env::args().collect();
+    let is_cli_mode = args.iter().any(|arg| arg == "--cli");
+
+    // CLI模式下识别取消信号，转换为结构化JSON
+    let is_cancelled = if is_cli_mode {
+        match &response {
+            serde_json::Value::String(text) => {
+                text == "CANCELLED" || text == "用户取消了操作"
+            }
+            serde_json::Value::Object(map) => {
+                map.get("cancelled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    let response_value = if is_cli_mode && is_cancelled {
+        serde_json::json!({ "cancelled": true })
+    } else {
+        response
+    };
+
     // 将响应序列化为JSON字符串
     let response_str =
-        serde_json::to_string(&response).map_err(|e| format!("序列化响应失败: {}", e))?;
+        serde_json::to_string(&response_value).map_err(|e| format!("序列化响应失败: {}", e))?;
 
     if response_str.trim().is_empty() {
         return Err("响应内容不能为空".to_string());
     }
 
     // 检查是否为MCP模式
-    let args: Vec<String> = std::env::args().collect();
     let is_mcp_mode = args.len() >= 3 && args[1] == "--mcp-request";
 
-    if is_mcp_mode {
-        // MCP模式：直接输出到stdout（MCP协议要求）
+    if is_mcp_mode || is_cli_mode {
+        // MCP/CLI模式：直接输出到stdout（CLI要求结构化JSON）
         println!("{}", response_str);
         std::io::Write::flush(&mut std::io::stdout())
             .map_err(|e| format!("刷新stdout失败: {}", e))?;
+        if is_cli_mode && is_cancelled {
+            // CLI取消：按约定退出码 2
+            eprintln!("用户取消操作");
+            std::process::exit(2);
+        }
     } else {
         // 通过channel发送响应（如果有的话）
         let sender = {
@@ -412,6 +443,25 @@ pub async fn send_mcp_response(
 pub fn get_cli_args() -> Result<serde_json::Value, String> {
     let args: Vec<String> = std::env::args().collect();
     let mut result = serde_json::Map::new();
+
+    // 检查是否为CLI交互模式（通过环境变量）
+    if std::env::var("SANSHU_CLI_MODE").ok().as_deref() == Some("true") {
+        result.insert(
+            "cli_mode".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
+        if let Ok(request_json) = std::env::var("SANSHU_CLI_REQUEST") {
+            match serde_json::from_str::<serde_json::Value>(&request_json) {
+                Ok(value) => {
+                    result.insert("cli_request".to_string(), value);
+                }
+                Err(e) => {
+                    log::warn!("CLI 请求解析失败: {}", e);
+                }
+            }
+        }
+    }
 
     // 检查是否有 --mcp-request 参数
     if args.len() >= 3 && args[1] == "--mcp-request" {
