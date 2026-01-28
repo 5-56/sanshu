@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TreeOption } from 'naive-ui'
-import type { FileIndexStatusType, ProjectFilesStatus, ProjectIndexStatus } from '../../types/tauri'
+import type { FileIndexStatusType, NestedProjectInfo, ProjectFilesStatus, ProjectIndexStatus, ProjectWithNestedStatus } from '../../types/tauri'
 import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 import { computed, h, ref, watch } from 'vue'
@@ -57,6 +57,10 @@ const loadingFiles = ref(false)
 const filesError = ref<string | null>(null)
 // 是否仅显示未完全同步的文件（过滤开关）
 const showOnlyPending = ref(false)
+
+// 嵌套项目状态
+const nestedStatus = ref<ProjectWithNestedStatus | null>(null)
+const loadingNested = ref(false)
 
 const message = useMessage()
 
@@ -295,12 +299,65 @@ async function fetchFilesStatus() {
   }
 }
 
-// 当弹窗打开且有项目路径时，自动加载一次文件状态
+// 加载嵌套项目状态
+async function fetchNestedStatus() {
+  if (!props.projectRoot)
+    return
+
+  loadingNested.value = true
+  try {
+    const result = await invoke<ProjectWithNestedStatus>('get_acemcp_project_with_nested', {
+      projectRootPath: props.projectRoot,
+    })
+    nestedStatus.value = result
+  }
+  catch (err) {
+    console.error('获取嵌套项目状态失败:', err)
+  }
+  finally {
+    loadingNested.value = false
+  }
+}
+
+// 是否有嵌套项目
+const hasNestedProjects = computed(() => {
+  return (nestedStatus.value?.nested_projects?.length ?? 0) > 0
+})
+
+// 嵌套项目列表
+const nestedProjects = computed(() => nestedStatus.value?.nested_projects ?? [])
+
+// 获取子项目状态图标
+function getNestedStatusIcon(np: NestedProjectInfo): string {
+  const status = np.index_status?.status
+  switch (status) {
+    case 'synced':
+      return 'i-carbon-checkmark-filled text-emerald-400'
+    case 'indexing':
+      return 'i-carbon-in-progress text-emerald-400/80 animate-spin'
+    case 'failed':
+      return 'i-carbon-warning-filled text-rose-400'
+    default:
+      return 'i-carbon-circle-dash text-gray-400/60'
+  }
+}
+
+// 获取子项目状态文字
+function getNestedStatusText(np: NestedProjectInfo): string {
+  const status = np.index_status
+  if (!status)
+    return '未索引'
+  return `${status.indexed_files}/${status.total_files}`
+}
+
+// 当弹窗打开且有项目路径时，自动加载文件状态和嵌套项目状态
 watch(
   () => props.show,
   (visible) => {
-    if (visible && props.projectRoot)
+    if (visible && props.projectRoot) {
       fetchFilesStatus()
+      fetchNestedStatus()
+    }
   },
 )
 
@@ -466,6 +523,39 @@ function handleCopyPath() {
         <div v-if="projectStatus?.last_error" class="error-info">
           <div class="i-carbon-warning-alt" />
           <span>{{ projectStatus.last_error }}</span>
+        </div>
+
+        <!-- 嵌套项目区域（如果有） -->
+        <div v-if="hasNestedProjects" class="nested-projects-card">
+          <div class="nested-card__header">
+            <div class="i-carbon-folder-parent nested-card__icon" />
+            <span class="nested-card__title">Git 子项目</span>
+            <span class="nested-card__count">{{ nestedProjects.length }}</span>
+          </div>
+          <!-- 骨架屏 -->
+          <div v-if="loadingNested" class="nested-skeleton">
+            <div v-for="i in 3" :key="i" class="skeleton-row">
+              <div class="skeleton-icon" />
+              <div class="skeleton-text" />
+            </div>
+          </div>
+          <!-- 嵌套项目列表 -->
+          <div v-else class="nested-card__list">
+            <div
+              v-for="np in nestedProjects"
+              :key="np.absolute_path"
+              class="nested-card__item"
+            >
+              <div class="nested-card__item-left">
+                <div class="i-carbon-folder-details nested-card__folder-icon" />
+                <span class="nested-card__item-name">{{ np.relative_path }}</span>
+              </div>
+              <div class="nested-card__item-right">
+                <span class="nested-card__item-stats">{{ getNestedStatusText(np) }}</span>
+                <div :class="getNestedStatusIcon(np)" class="nested-card__item-status" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1009,5 +1099,139 @@ function handleCopyPath() {
 
 :root.dark .footer-hint {
   color: #9ca3af;
+}
+
+/* ==================== 嵌套项目卡片 ==================== */
+.nested-projects-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.06) 0%, rgba(52, 211, 153, 0.02) 100%);
+  border: 1px solid rgba(52, 211, 153, 0.12);
+}
+
+.nested-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.nested-card__icon {
+  width: 16px;
+  height: 16px;
+  color: rgba(52, 211, 153, 0.8);
+}
+
+.nested-card__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(52, 211, 153, 0.95);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.nested-card__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(52, 211, 153, 0.2);
+  color: rgba(52, 211, 153, 0.95);
+}
+
+.nested-card__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nested-card__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: all 0.2s ease;
+}
+
+.nested-card__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nested-card__item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nested-card__folder-icon {
+  width: 14px;
+  height: 14px;
+  color: rgba(52, 211, 153, 0.6);
+}
+
+.nested-card__item-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.nested-card__item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nested-card__item-stats {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.nested-card__item-status {
+  width: 12px;
+  height: 12px;
+}
+
+/* 骨架屏 */
+.nested-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.skeleton-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-text {
+  height: 12px;
+  width: 100px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 </style>

@@ -3,7 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::config::{AppState, save_config};
 use crate::network::proxy::{ProxyDetector, ProxyInfo, ProxyType};
 use super::AcemcpTool;
-use super::types::{AcemcpRequest, ProjectIndexStatus, ProjectsIndexStatus, ProjectFilesStatus, DetectedProxy, ProxySpeedTestResult, SpeedTestMetric, SpeedTestProgress, SpeedTestStageStatus};
+use super::types::{AcemcpRequest, ProjectIndexStatus, ProjectsIndexStatus, ProjectFilesStatus, DetectedProxy, ProxySpeedTestResult, SpeedTestMetric, SpeedTestProgress, SpeedTestStageStatus, ProjectWithNestedStatus};
 use reqwest;
 
 #[derive(Debug, serde::Deserialize)]
@@ -587,6 +587,13 @@ pub async fn get_acemcp_project_files_status(
     AcemcpTool::get_project_files_status(project_root_path)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 获取项目及其嵌套子项目的索引状态
+/// 用于前端展示包含多个 Git 子仓库的项目结构
+#[tauri::command]
+pub fn get_acemcp_project_with_nested(project_root_path: String) -> Result<ProjectWithNestedStatus, String> {
+    Ok(AcemcpTool::get_project_with_nested_status(project_root_path))
 }
 
 /// 手动触发索引更新

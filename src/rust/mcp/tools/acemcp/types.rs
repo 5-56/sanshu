@@ -140,6 +140,32 @@ pub struct ProjectFilesStatus {
     pub files: Vec<FileIndexStatus>,
 }
 
+/// 嵌套项目信息（检测到的子目录中的独立 Git 仓库或子项目）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NestedProjectInfo {
+    /// 子项目路径（相对于父项目根目录）
+    pub relative_path: String,
+    /// 子项目绝对路径
+    pub absolute_path: String,
+    /// 是否是独立的 Git 仓库（包含 .git 目录）
+    pub is_git_repo: bool,
+    /// 子项目的索引状态（如果存在）
+    pub index_status: Option<ProjectIndexStatus>,
+    /// 子项目包含的文件数量（粗略估计）
+    pub file_count: usize,
+}
+
+/// 包含嵌套项目信息的项目状态（用于前端多项目展示）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectWithNestedStatus {
+    /// 主项目（外层目录）的索引状态
+    pub root_status: ProjectIndexStatus,
+    /// 检测到的嵌套项目列表
+    pub nested_projects: Vec<NestedProjectInfo>,
+    /// 普通子目录列表（不含 .git）
+    pub regular_directories: Vec<String>,
+}
+
 // ============ 代理测速相关类型 ============
 
 /// 检测到的代理信息

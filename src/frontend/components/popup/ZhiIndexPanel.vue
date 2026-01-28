@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /**
  * ZhiIndexPanel - zhi 弹窗索引状态折叠面板
- * 
+ *
  * 功能：
- * 1. 收起状态：显示状态图标 + 同步状态 + Blob 数 + 最后同步时间
- * 2. 展开状态：4格统计卡片 + 同步操作按钮
+ * 1. 收起状态：显示状态图标 + 同步状态 + 已索引文件数 + 最后同步时间
+ * 2. 展开状态：
+ *    - 嵌套项目展示：检测到 Git 子仓库时分组显示
+ *    - 统计卡片 + 同步操作按钮
  * 3. 智能降级：根据 sou 启用状态和 ACE 配置状态显示不同引导
  */
-import type { ProjectIndexStatus } from '../../types/tauri'
-import { computed, h, ref } from 'vue'
+import type { NestedProjectInfo, ProjectIndexStatus, ProjectWithNestedStatus } from '../../types/tauri'
+import { invoke } from '@tauri-apps/api/core'
+import { computed, h, onMounted, ref, watch } from 'vue'
 
 // ==================== Props & Emits ====================
 
@@ -51,6 +54,10 @@ const isExpanded = ref(false)
 // 同步下拉菜单是否显示
 const showSyncMenu = ref(false)
 
+// 嵌套项目状态
+const nestedStatus = ref<ProjectWithNestedStatus | null>(null)
+const loadingNested = ref(false)
+
 // ==================== 计算属性 ====================
 
 // 是否应该显示面板（需要有项目路径）
@@ -58,10 +65,20 @@ const shouldShow = computed(() => !!props.projectRoot)
 
 // 面板显示模式：normal（正常）/ guide-sou（引导启用 sou）/ guide-ace（引导配置 ACE）
 const displayMode = computed<'normal' | 'guide-sou' | 'guide-ace'>(() => {
-  if (!props.souEnabled) return 'guide-sou'
-  if (!props.acemcpConfigured) return 'guide-ace'
+  if (!props.souEnabled)
+    return 'guide-sou'
+  if (!props.acemcpConfigured)
+    return 'guide-ace'
   return 'normal'
 })
+
+// 是否有嵌套项目
+const hasNestedProjects = computed(() => {
+  return (nestedStatus.value?.nested_projects?.length ?? 0) > 0
+})
+
+// 嵌套项目列表
+const nestedProjects = computed(() => nestedStatus.value?.nested_projects ?? [])
 
 // 状态图标类名
 const statusIcon = computed(() => {
@@ -70,11 +87,11 @@ const statusIcon = computed(() => {
     case 'idle':
       return 'i-carbon-circle-dash text-gray-400'
     case 'indexing':
-      return 'i-carbon-in-progress text-blue-400 animate-spin'
+      return 'i-carbon-in-progress text-emerald-400/80 animate-spin'
     case 'synced':
-      return 'i-carbon-checkmark-filled text-green-400'
+      return 'i-carbon-checkmark-filled text-emerald-400'
     case 'failed':
-      return 'i-carbon-warning-filled text-red-400'
+      return 'i-carbon-warning-filled text-rose-400'
     default:
       return 'i-carbon-help text-gray-400'
   }
@@ -83,9 +100,9 @@ const statusIcon = computed(() => {
 // 状态文案
 const statusText = computed(() => {
   const status = props.projectStatus?.status
-    switch (status) {
-      case 'idle':
-        return '空闲'
+  switch (status) {
+    case 'idle':
+      return '空闲'
     case 'indexing':
       return `索引中 ${props.projectStatus?.progress || 0}%`
     case 'synced':
@@ -97,11 +114,32 @@ const statusText = computed(() => {
   }
 })
 
-// 文件总数
-const totalFiles = computed(() => props.projectStatus?.total_files ?? 0)
+// 文件总数（包含嵌套项目时汇总）
+const totalFiles = computed(() => {
+  if (hasNestedProjects.value && nestedStatus.value) {
+    // 汇总主项目和所有嵌套项目的文件数
+    let total = nestedStatus.value.root_status.total_files
+    for (const np of nestedStatus.value.nested_projects) {
+      if (np.index_status)
+        total += np.index_status.total_files
+    }
+    return total
+  }
+  return props.projectStatus?.total_files ?? 0
+})
 
 // 已索引文件数
-const indexedFiles = computed(() => props.projectStatus?.indexed_files ?? 0)
+const indexedFiles = computed(() => {
+  if (hasNestedProjects.value && nestedStatus.value) {
+    let indexed = nestedStatus.value.root_status.indexed_files
+    for (const np of nestedStatus.value.nested_projects) {
+      if (np.index_status)
+        indexed += np.index_status.indexed_files
+    }
+    return indexed
+  }
+  return props.projectStatus?.indexed_files ?? 0
+})
 
 // 待处理文件数
 const pendingFiles = computed(() => props.projectStatus?.pending_files ?? 0)
@@ -112,19 +150,22 @@ const failedFiles = computed(() => props.projectStatus?.failed_files ?? 0)
 // 格式化最后同步时间
 const lastSyncTime = computed(() => {
   const time = props.projectStatus?.last_success_time
-  if (!time) return null
+  if (!time)
+    return null
 
-  // 尝试计算相对时间
   try {
     const syncDate = new Date(time)
     const now = new Date()
     const diffMs = now.getTime() - syncDate.getTime()
     const diffMinutes = Math.floor(diffMs / 60000)
 
-    if (diffMinutes < 1) return '刚刚'
-    if (diffMinutes < 60) return `${diffMinutes}分钟前`
+    if (diffMinutes < 1)
+      return '刚刚'
+    if (diffMinutes < 60)
+      return `${diffMinutes}分钟前`
     const diffHours = Math.floor(diffMinutes / 60)
-    if (diffHours < 24) return `${diffHours}小时前`
+    if (diffHours < 24)
+      return `${diffHours}小时前`
     const diffDays = Math.floor(diffHours / 24)
     return `${diffDays}天前`
   }
@@ -138,9 +179,32 @@ const isSyncing = computed(() => props.resyncLoading || props.isIndexing)
 
 // ==================== 事件处理 ====================
 
+// 加载嵌套项目状态
+async function fetchNestedStatus() {
+  if (!props.projectRoot)
+    return
+
+  loadingNested.value = true
+  try {
+    const result = await invoke<ProjectWithNestedStatus>('get_acemcp_project_with_nested', {
+      projectRootPath: props.projectRoot,
+    })
+    nestedStatus.value = result
+  }
+  catch (err) {
+    console.error('获取嵌套项目状态失败:', err)
+  }
+  finally {
+    loadingNested.value = false
+  }
+}
+
 // 切换面板展开状态
 function toggleExpand() {
   isExpanded.value = !isExpanded.value
+  // 展开时加载嵌套项目状态
+  if (isExpanded.value && !nestedStatus.value)
+    fetchNestedStatus()
 }
 
 // 处理同步操作
@@ -158,6 +222,43 @@ function handleOpenSettings() {
 function handleOpenDetail() {
   emit('open-detail')
 }
+
+// 获取子项目状态图标
+function getNestedStatusIcon(np: NestedProjectInfo): string {
+  const status = np.index_status?.status
+  switch (status) {
+    case 'synced':
+      return 'i-carbon-checkmark-filled text-emerald-400'
+    case 'indexing':
+      return 'i-carbon-in-progress text-emerald-400/80 animate-spin'
+    case 'failed':
+      return 'i-carbon-warning-filled text-rose-400'
+    default:
+      return 'i-carbon-circle-dash text-gray-400/60'
+  }
+}
+
+// 获取子项目状态文字
+function getNestedStatusText(np: NestedProjectInfo): string {
+  const status = np.index_status
+  if (!status)
+    return '未索引'
+  return `${status.indexed_files}/${status.total_files}`
+}
+
+// 监听项目路径变化，重新加载嵌套状态
+watch(() => props.projectRoot, () => {
+  nestedStatus.value = null
+  if (isExpanded.value)
+    fetchNestedStatus()
+})
+
+// 初始化
+onMounted(() => {
+  // 如果默认展开，加载嵌套状态
+  if (isExpanded.value)
+    fetchNestedStatus()
+})
 </script>
 
 <template>
@@ -169,7 +270,7 @@ function handleOpenDetail() {
       class="panel-guide"
     >
       <div class="guide-icon">
-        <div class="i-carbon-search text-lg text-gray-400" />
+        <div class="i-carbon-search text-lg text-gray-400/80" />
       </div>
       <div class="guide-content">
         <span class="guide-text">启用代码搜索以使用智能索引</span>
@@ -187,8 +288,8 @@ function handleOpenDetail() {
       v-else-if="displayMode === 'guide-ace'"
       class="panel-guide"
     >
-      <div class="guide-icon">
-        <div class="i-carbon-api text-lg text-amber-400" />
+      <div class="guide-icon guide-icon--warning">
+        <div class="i-carbon-api text-lg text-amber-400/80" />
       </div>
       <div class="guide-content">
         <span class="guide-text">配置 API 密钥以启用代码索引</span>
@@ -212,8 +313,13 @@ function handleOpenDetail() {
           <span class="status-text">{{ statusText }}</span>
           <!-- 分隔符 -->
           <span class="status-divider">·</span>
-          <!-- 文件数 -->
-          <span class="status-files">已索引 {{ indexedFiles }}/{{ totalFiles }} 个文件</span>
+          <!-- 文件数（显示嵌套项目数量提示） -->
+          <span class="status-files">
+            已索引 {{ indexedFiles }}/{{ totalFiles }} 个文件
+            <span v-if="hasNestedProjects" class="nested-badge">
+              含 {{ nestedProjects.length }} 个子项目
+            </span>
+          </span>
           <!-- 最后同步时间（如有） -->
           <template v-if="lastSyncTime">
             <span class="status-divider">·</span>
@@ -232,6 +338,38 @@ function handleOpenDetail() {
       <!-- 展开内容区域 -->
       <n-collapse-transition :show="isExpanded">
         <div class="panel-content">
+          <!-- 嵌套项目区域（如果有） -->
+          <div v-if="hasNestedProjects" class="nested-projects-section">
+            <div class="section-header">
+              <div class="i-carbon-folder-parent section-icon" />
+              <span class="section-title">Git 子项目</span>
+            </div>
+            <!-- 骨架屏 -->
+            <div v-if="loadingNested" class="nested-skeleton">
+              <div v-for="i in 3" :key="i" class="skeleton-item">
+                <div class="skeleton-icon" />
+                <div class="skeleton-text" />
+              </div>
+            </div>
+            <!-- 嵌套项目列表 -->
+            <div v-else class="nested-list">
+              <div
+                v-for="np in nestedProjects"
+                :key="np.absolute_path"
+                class="nested-item"
+              >
+                <div class="nested-item__left">
+                  <div class="i-carbon-folder-details nested-item__folder-icon" />
+                  <span class="nested-item__name">{{ np.relative_path }}</span>
+                </div>
+                <div class="nested-item__right">
+                  <span class="nested-item__stats">{{ getNestedStatusText(np) }}</span>
+                  <div :class="getNestedStatusIcon(np)" class="nested-item__status-icon" />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 统计卡片网格 -->
           <div class="stats-grid">
             <!-- 总文件数 -->
@@ -244,12 +382,12 @@ function handleOpenDetail() {
               <div class="stat-value">{{ indexedFiles }}</div>
               <div class="stat-label">已索引</div>
             </div>
-            <!-- 待处理（仅在有值时显示） -->
+            <!-- 待处理 -->
             <div class="stat-card stat-card--info">
               <div class="stat-value">{{ pendingFiles }}</div>
               <div class="stat-label">待处理</div>
             </div>
-            <!-- 失败（仅在有值时显示） -->
+            <!-- 失败 -->
             <div class="stat-card stat-card--error">
               <div class="stat-value">{{ failedFiles }}</div>
               <div class="stat-label">失败</div>
@@ -264,8 +402,8 @@ function handleOpenDetail() {
               trigger="click"
               placement="bottom-start"
               :options="[
-                { label: '增量同步（推荐）', key: 'incremental', icon: () => h('div', { class: 'i-carbon-restart' }) },
-                { label: '全量重建（清空索引）', key: 'full', icon: () => h('div', { class: 'i-carbon-renew' }) },
+                { label: '增量同步', key: 'incremental', icon: () => h('div', { class: 'i-carbon-restart' }) },
+                { label: '全量重建', key: 'full', icon: () => h('div', { class: 'i-carbon-renew' }) },
               ]"
               @select="handleResync"
               @clickoutside="showSyncMenu = false"
@@ -302,29 +440,36 @@ function handleOpenDetail() {
 /* ==================== 面板容器 ==================== */
 .zhi-index-panel {
   margin: 8px;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
-  background: rgba(30, 30, 30, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(8px);
+  background: linear-gradient(135deg, rgba(30, 30, 30, 0.7) 0%, rgba(25, 25, 25, 0.8) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 /* ==================== 引导模式样式 ==================== */
 .panel-guide {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 12px 16px;
 }
 
 .guide-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.guide-icon--warning {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(251, 191, 36, 0.04) 100%);
+  border-color: rgba(251, 191, 36, 0.15);
 }
 
 .guide-content {
@@ -337,26 +482,22 @@ function handleOpenDetail() {
 
 .guide-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.65);
 }
 
 /* ==================== 正常模式 - 头部状态条 ==================== */
-.panel-normal {
-  /* 容器样式由父级处理 */
-}
-
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  min-height: 40px;
+  padding: 12px 16px;
+  min-height: 44px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s ease;
 }
 
 .panel-header:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .header-left {
@@ -371,6 +512,7 @@ function handleOpenDetail() {
 .status-icon {
   width: 14px;
   height: 14px;
+  flex-shrink: 0;
 }
 
 .status-text {
@@ -379,15 +521,27 @@ function handleOpenDetail() {
 }
 
 .status-divider {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.25);
 }
 
 .status-files {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.nested-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.15) 0%, rgba(52, 211, 153, 0.08) 100%);
+  color: rgba(52, 211, 153, 0.9);
+  border: 1px solid rgba(52, 211, 153, 0.2);
 }
 
 .status-time {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .header-right {
@@ -398,18 +552,138 @@ function handleOpenDetail() {
 .expand-icon {
   width: 14px;
   height: 14px;
-  color: rgba(255, 255, 255, 0.5);
-  transition: transform 0.2s;
+  color: rgba(255, 255, 255, 0.4);
+  transition: transform 0.2s ease;
 }
 
 /* ==================== 正常模式 - 展开内容 ==================== */
 .panel-content {
-  padding: 0 14px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  min-height: 120px;
+  padding: 0 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* 统计卡片网格 */
+/* ==================== 嵌套项目区域 ==================== */
+.nested-projects-section {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.04) 0%, rgba(52, 211, 153, 0.02) 100%);
+  border: 1px solid rgba(52, 211, 153, 0.1);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.section-icon {
+  width: 14px;
+  height: 14px;
+  color: rgba(52, 211, 153, 0.7);
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(52, 211, 153, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 骨架屏 */
+.nested-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.skeleton-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-text {
+  height: 12px;
+  width: 80px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 嵌套项目列表 */
+.nested-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nested-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.2s ease;
+}
+
+.nested-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.nested-item__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nested-item__folder-icon {
+  width: 14px;
+  height: 14px;
+  color: rgba(52, 211, 153, 0.6);
+}
+
+.nested-item__name {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.nested-item__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nested-item__stats {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: ui-monospace, monospace;
+}
+
+.nested-item__status-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* ==================== 统计卡片网格 ==================== */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -423,8 +697,14 @@ function handleOpenDetail() {
   align-items: center;
   padding: 10px 8px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+.stat-card:hover {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .stat-card--success .stat-value {
@@ -448,18 +728,18 @@ function handleOpenDetail() {
 
 .stat-label {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.45);
   margin-top: 2px;
 }
 
-/* 操作按钮区域 */
+/* ==================== 操作按钮区域 ==================== */
 .actions-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 </style>

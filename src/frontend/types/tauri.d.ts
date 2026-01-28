@@ -35,3 +35,27 @@ export interface ProjectFilesStatus {
   project_root: string
   files: FileIndexStatus[]
 }
+
+// 嵌套项目信息（检测到的子目录中的独立 Git 仓库）
+export interface NestedProjectInfo {
+  // 子项目路径（相对于父项目根目录）
+  relative_path: string
+  // 子项目绝对路径
+  absolute_path: string
+  // 是否是独立的 Git 仓库
+  is_git_repo: boolean
+  // 子项目的索引状态
+  index_status: ProjectIndexStatus | null
+  // 子项目包含的文件数量
+  file_count: number
+}
+
+// 包含嵌套项目信息的项目状态
+export interface ProjectWithNestedStatus {
+  // 主项目的索引状态
+  root_status: ProjectIndexStatus
+  // 检测到的嵌套项目列表
+  nested_projects: NestedProjectInfo[]
+  // 普通子目录列表（不含 .git）
+  regular_directories: string[]
+}

@@ -1,6 +1,23 @@
-import type { ProjectIndexStatus, ProjectsIndexStatus } from '../types/tauri'
+import type { ProjectIndexStatus, ProjectsIndexStatus, ProjectWithNestedStatus } from '../types/tauri'
 import { invoke } from '@tauri-apps/api/core'
 import { computed, onUnmounted, ref } from 'vue'
+
+
+/**
+ * 规范化项目路径，去除 Windows 扩展路径前缀并统一使用正斜杠
+ * 确保前后端路径格式一致，避免 HashMap 查找失败
+ */
+function normalizeProjectPath(path: string): string {
+  let p = path
+  // 处理 //?/ 格式
+  if (p.startsWith('//?/'))
+    p = p.slice(4)
+  // 处理 \\?\ 格式
+  else if (p.startsWith('\\\\?\\'))
+    p = p.slice(4)
+  // 统一使用正斜杠
+  return p.replace(/\\/g, '/')
+}
 
 // 全局状态
 const allProjectsStatus = ref<ProjectsIndexStatus>({ projects: {} })
@@ -16,10 +33,30 @@ let pollingTimer: number | null = null
  */
 export function useAcemcpSync() {
   // 当前项目的索引状态
+  // 使用路径规范化查找，支持原始路径和规范化路径匹配
   const currentProjectStatus = computed<ProjectIndexStatus | null>(() => {
     if (!currentProjectRoot.value)
       return null
-    return allProjectsStatus.value.projects[currentProjectRoot.value] || null
+
+    const projects = allProjectsStatus.value.projects
+    const rawPath = currentProjectRoot.value
+    const normalizedPath = normalizeProjectPath(rawPath)
+
+    // 尝试直接匹配原始路径
+    if (projects[rawPath])
+      return projects[rawPath]
+
+    // 尝试匹配规范化后的路径
+    if (projects[normalizedPath])
+      return projects[normalizedPath]
+
+    // 遍历所有项目，尝试规范化后匹配
+    for (const [key, status] of Object.entries(projects)) {
+      if (normalizeProjectPath(key) === normalizedPath)
+        return status
+    }
+
+    return null
   })
 
   // 状态摘要文本
@@ -230,6 +267,20 @@ export function useAcemcpSync() {
     }
   }
 
+  // 获取项目及其嵌套子项目的索引状态
+  async function fetchProjectWithNested(projectRoot: string) {
+    try {
+      const result = await invoke<ProjectWithNestedStatus>('get_acemcp_project_with_nested', {
+        projectRootPath: projectRoot,
+      })
+      return result
+    }
+    catch (err) {
+      console.error('获取嵌套项目状态失败:', err)
+      return null
+    }
+  }
+
   return {
     // 状态
     allProjectsStatus,
@@ -258,5 +309,7 @@ export function useAcemcpSync() {
     stopPolling,
     setCurrentProject,
     checkAcemcpConfigured,
+    fetchProjectWithNested,
+    normalizeProjectPath,
   }
 }

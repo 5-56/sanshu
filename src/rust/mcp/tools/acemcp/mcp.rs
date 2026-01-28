@@ -25,6 +25,8 @@ use super::types::{
     ProjectFilesStatus,
     FileIndexStatus,
     FileIndexStatusKind,
+    NestedProjectInfo,
+    ProjectWithNestedStatus,
 };
 use crate::log_debug;
 use crate::log_important;
@@ -214,11 +216,13 @@ impl AcemcpTool {
             ProjectsFile::default()
         };
 
-        let normalized_root = PathBuf::from(&project_root_path)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(&project_root_path))
-            .to_string_lossy()
-            .replace('\\', "/");
+        // 使用 normalize_project_path 去除 Windows 扩展路径前缀
+        let normalized_root = normalize_project_path(
+            &PathBuf::from(&project_root_path)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&project_root_path))
+                .to_string_lossy()
+        );
 
         let existing_blob_names: std::collections::HashSet<String> = projects
             .0
@@ -298,6 +302,79 @@ impl AcemcpTool {
             }
         } else {
             panic!("Schema creation failed");
+        }
+    }
+
+    /// 获取项目及其嵌套子项目的索引状态（供 Tauri 命令调用）
+    /// 
+    /// 该方法会扫描项目根目录下的直接子目录，检测哪些是独立的 Git 仓库，
+    /// 并返回每个子项目的索引状态。用于前端展示多项目结构。
+    pub fn get_project_with_nested_status(project_root_path: String) -> ProjectWithNestedStatus {
+        let root_path = PathBuf::from(&project_root_path);
+        let root_status = get_project_status(&project_root_path);
+        
+        let mut nested_projects = Vec::new();
+        let mut regular_directories = Vec::new();
+        
+        // 扫描直接子目录（仅第一层）
+        if let Ok(entries) = fs::read_dir(&root_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                
+                let dir_name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                
+                // 跳过隐藏目录和常见排除目录
+                if dir_name.starts_with('.') 
+                    || dir_name == "node_modules" 
+                    || dir_name == "target" 
+                    || dir_name == "dist" 
+                {
+                    continue;
+                }
+                
+                // 检测是否是 Git 仓库
+                let git_dir = path.join(".git");
+                let is_git_repo = git_dir.exists() && git_dir.is_dir();
+                
+                if is_git_repo {
+                    // 获取子项目的索引状态
+                    let sub_path_str = normalize_project_path(&path.to_string_lossy());
+                    let sub_status = get_project_status(&sub_path_str);
+                    
+                    // 粗略估计文件数量（使用索引状态中的 total_files，如果没有则设为 0）
+                    let file_count = if sub_status.status != IndexStatus::Idle {
+                        sub_status.total_files
+                    } else {
+                        0
+                    };
+                    
+                    nested_projects.push(NestedProjectInfo {
+                        relative_path: dir_name,
+                        absolute_path: sub_path_str,
+                        is_git_repo: true,
+                        index_status: Some(sub_status),
+                        file_count,
+                    });
+                } else {
+                    regular_directories.push(dir_name);
+                }
+            }
+        }
+        
+        // 按字母顺序排序
+        nested_projects.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        regular_directories.sort();
+        
+        ProjectWithNestedStatus {
+            root_status,
+            nested_projects,
+            regular_directories,
         }
     }
 }
@@ -381,6 +458,26 @@ fn normalize_base_url(input: &str) -> String {
     }
     while url.ends_with('/') { url.pop(); }
     url
+}
+
+/// 规范化项目路径，去除 Windows 扩展路径前缀并统一使用正斜杠
+/// 
+/// Windows 的 `canonicalize()` 会返回 `//?/C:/...` 或 `\\?\C:\...` 格式的路径，
+/// 这会导致前后端路径匹配失败。此函数确保路径格式统一。
+fn normalize_project_path(path: &str) -> String {
+    let mut p = path.to_string();
+    
+    // 处理 //?/ 格式（canonicalize 在某些情况下返回）
+    if p.starts_with("//?/") {
+        p = p[4..].to_string();
+    }
+    // 处理 \\?\ 格式（Windows 扩展路径语法）
+    else if p.starts_with("\\\\?\\") {
+        p = p[4..].to_string();
+    }
+    
+    // 统一使用正斜杠
+    p.replace('\\', "/")
 }
 
 async fn retry_request<F, Fut, T>(mut f: F, max_retries: usize, base_delay_secs: f64) -> anyhow::Result<T>
@@ -482,11 +579,13 @@ where
     F: FnOnce(&mut ProjectIndexStatus),
 {
     let mut all_status = load_projects_status();
-    let normalized_root = PathBuf::from(project_root)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(project_root))
-        .to_string_lossy()
-        .replace('\\', "/");
+    // 使用 normalize_project_path 去除 Windows 扩展路径前缀
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root))
+            .to_string_lossy()
+    );
 
     let project_status = all_status.projects
         .entry(normalized_root.clone())
@@ -504,11 +603,13 @@ where
 /// 获取指定项目的索引状态
 fn get_project_status(project_root: &str) -> ProjectIndexStatus {
     let all_status = load_projects_status();
-    let normalized_root = PathBuf::from(project_root)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(project_root))
-        .to_string_lossy()
-        .replace('\\', "/");
+    // 使用 normalize_project_path 去除 Windows 扩展路径前缀
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root))
+            .to_string_lossy()
+    );
 
     all_status.projects.get(&normalized_root).cloned().unwrap_or_else(|| {
         let mut status = ProjectIndexStatus::default();
@@ -915,7 +1016,13 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
         serde_json::from_str(&data).unwrap_or_default()
     } else { ProjectsFile::default() };
 
-    let normalized_root = PathBuf::from(project_root_path).canonicalize().unwrap_or_else(|_| PathBuf::from(project_root_path)).to_string_lossy().replace('\\', "/");
+    // 使用 normalize_project_path 去除 Windows 扩展路径前缀
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root_path))
+            .to_string_lossy()
+    );
     let existing_blob_names: std::collections::HashSet<String> = projects.0.get(&normalized_root).cloned().unwrap_or_default().into_iter().collect();
 
     // 计算所有 blob 的哈希值，建立哈希到 blob 的映射
@@ -1178,11 +1285,13 @@ async fn search_only(config: &AcemcpConfig, project_root_path: &str, query: &str
         ProjectsFile::default()
     };
 
-    let normalized_root = PathBuf::from(project_root_path)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(project_root_path))
-        .to_string_lossy()
-        .replace('\\', "/");
+    // 使用 normalize_project_path 去除 Windows 扩展路径前缀
+    let normalized_root = normalize_project_path(
+        &PathBuf::from(project_root_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(project_root_path))
+            .to_string_lossy()
+    );
 
     let blob_names = projects.0.get(&normalized_root).cloned().unwrap_or_default();
 
