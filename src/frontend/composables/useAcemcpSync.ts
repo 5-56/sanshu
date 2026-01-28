@@ -215,6 +215,18 @@ export function useAcemcpSync() {
     stopPolling()
   })
 
+  // 检测 ACE 配置是否完整（base_url 和 token 均已配置）
+  async function checkAcemcpConfigured(): Promise<boolean> {
+    try {
+      const config = await invoke<{ base_url?: string; token?: string }>('get_acemcp_config')
+      return !!(config.base_url && config.token)
+    }
+    catch (err) {
+      console.error('检测 ACE 配置失败:', err)
+      return false
+    }
+  }
+
   return {
     // 状态
     allProjectsStatus,
@@ -242,5 +254,6 @@ export function useAcemcpSync() {
     startPolling,
     stopPolling,
     setCurrentProject,
+    checkAcemcpConfigured,
   }
 }

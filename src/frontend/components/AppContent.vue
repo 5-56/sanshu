@@ -246,6 +246,7 @@ onUnmounted(() => {
         @cancel="$emit('mcpCancel')"
         @theme-change="$emit('themeChange', $event)"
         @open-mcp-tools-tab="openMcpToolsTab"
+        @open-index-status="showIndexDrawer = true"
       />
 
       <!-- MCP 代码索引详情抽屉 -->

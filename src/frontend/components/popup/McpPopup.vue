@@ -6,11 +6,13 @@ import { useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { useAcemcpSync } from '../../composables/useAcemcpSync'
+import { useMcpToolsReactive } from '../../composables/useMcpTools'
 import { getContextPolicyStatus, shouldShowPolicyIndicator } from '../../utils/conditionalContext'
 import EnhanceModal from './EnhanceModal.vue'
 import PopupActions from './PopupActions.vue'
 import PopupContent from './PopupContent.vue'
 import PopupInput from './PopupInput.vue'
+import ZhiIndexPanel from './ZhiIndexPanel.vue'
 
 interface AppConfig {
   theme: string
@@ -51,6 +53,7 @@ interface Emits {
   stopAudio: []
   testAudioError: [error: any]
   updateWindowSize: [size: { width: number, height: number, fixed: boolean }]
+  openIndexStatus: []
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -73,7 +76,21 @@ const {
   startPolling,
   stopPolling,
   setCurrentProject,
+  triggerIndexUpdate,
+  checkAcemcpConfigured,
 } = useAcemcpSync()
+
+// MCP 工具状态
+const { mcpTools, loadMcpTools } = useMcpToolsReactive()
+
+// sou 代码搜索工具是否启用
+const souEnabled = computed(() => mcpTools.value.some(tool => tool.id === 'sou' && tool.enabled))
+
+// ACE 配置是否完整
+const acemcpConfigured = ref(false)
+
+// 索引重新同步加载状态
+const resyncLoading = ref(false)
 
 // 响应式状态
 const loading = ref(false)
@@ -229,9 +246,13 @@ function handleTextUpdate(text: string) {
 }
 
 // 组件挂载时设置监听器和加载配置
-onMounted(() => {
+onMounted(async () => {
   loadReplyConfig()
   setupTelegramListener()
+  // 加载 MCP 工具配置（用于检测 sou 是否启用）
+  await loadMcpTools()
+  // 检测 ACE 配置是否完整
+  acemcpConfigured.value = await checkAcemcpConfigured()
 })
 
 // 组件卸载时清理监听器
@@ -458,36 +479,47 @@ function handleEnhanceCancel() {
 function handleOpenMcpToolsTab() {
   emit('openMcpToolsTab')
 }
+
+// 处理索引重新同步请求
+async function handleIndexResync(type: 'incremental' | 'full') {
+  if (!props.request?.project_root_path || resyncLoading.value)
+    return
+
+  resyncLoading.value = true
+  try {
+    // 目前统一使用增量同步（全量重建需要后端支持，可后续扩展）
+    const result = await triggerIndexUpdate(props.request.project_root_path)
+    message.success(typeof result === 'string' ? result : `${type === 'full' ? '全量重建' : '增量同步'}已触发`)
+  }
+  catch (error) {
+    console.error('触发索引更新失败:', error)
+    message.error(`触发索引更新失败: ${String(error)}`)
+  }
+  finally {
+    resyncLoading.value = false
+  }
+}
+
+// 处理打开索引详情抽屉
+function handleOpenIndexStatus() {
+  emit('openIndexStatus')
+}
 </script>
 
 <template>
   <div v-if="isVisible" class="flex flex-col flex-1">
-    <!-- 索引状态条（仅在有项目路径时显示） -->
-    <div
-      v-if="request?.project_root_path && currentProjectStatus"
-      class="mx-2 mt-2 px-3 py-2 bg-black-100 rounded-lg border border-gray-700/50"
-    >
-      <div class="flex items-center gap-2 text-xs">
-        <div :class="statusIcon" class="w-4 h-4" />
-        <span class="text-white/80">索引状态：</span>
-        <span class="text-white font-medium">{{ statusSummary }}</span>
-        <div v-if="isIndexing" class="flex-1 ml-2">
-          <n-progress
-            type="line"
-            :percentage="currentProjectStatus.progress"
-            :height="4"
-            :border-radius="2"
-            :show-indicator="false"
-            status="info"
-          />
-        </div>
-      </div>
-      <!-- 项目根目录显示，便于确认上下文来源 -->
-      <div class="mt-1 text-[11px] text-white/70">
-        <span class="text-white/50">项目：</span>
-        <span class="break-all text-white/90">{{ request?.project_root_path }}</span>
-      </div>
-    </div>
+    <!-- ACE 索引状态面板（智能降级：根据 sou 启用状态和 ACE 配置显示不同内容） -->
+    <ZhiIndexPanel
+      :project-root="request?.project_root_path"
+      :sou-enabled="souEnabled"
+      :acemcp-configured="acemcpConfigured"
+      :project-status="currentProjectStatus"
+      :is-indexing="isIndexing"
+      :resync-loading="resyncLoading"
+      @open-settings="handleOpenMcpToolsTab"
+      @open-detail="handleOpenIndexStatus"
+      @resync="handleIndexResync"
+    />
 
     <!-- UI/UX 上下文策略指示器（全局提示，便于统一感知） -->
     <div
