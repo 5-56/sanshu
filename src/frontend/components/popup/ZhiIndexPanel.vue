@@ -350,6 +350,7 @@ function handleOpenDetail() {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
+  min-height: 40px;
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -361,7 +362,9 @@ function handleOpenDetail() {
 .header-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  row-gap: 4px;
   font-size: 12px;
 }
 
@@ -403,12 +406,13 @@ function handleOpenDetail() {
 .panel-content {
   padding: 0 14px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 120px;
 }
 
 /* 统计卡片网格 */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
@@ -424,15 +428,15 @@ function handleOpenDetail() {
 }
 
 .stat-card--success .stat-value {
-  color: #4ade80;
+  color: #86efac;
 }
 
 .stat-card--info .stat-value {
-  color: #60a5fa;
+  color: #93c5fd;
 }
 
 .stat-card--error .stat-value {
-  color: #f87171;
+  color: #fca5a5;
 }
 
 .stat-value {
@@ -453,6 +457,7 @@ function handleOpenDetail() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);

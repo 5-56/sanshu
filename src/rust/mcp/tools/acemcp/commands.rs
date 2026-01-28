@@ -603,7 +603,8 @@ pub async fn trigger_acemcp_index_update(project_root_path: String) -> Result<St
 pub async fn trigger_acemcp_index_rebuild(project_root_path: String) -> Result<String, String> {
     // 先清理本地索引记录（projects.json + projects_status.json）
     // 全量重建不主动停止文件监听，避免影响自动索引
-    purge_project_index_records(&project_root_path, false)?;
+    purge_project_index_records(&project_root_path, false)
+        .map_err(|e| format!("全量重建前清理索引记录失败: {}", e))?;
 
     // 再触发索引更新（全量重建）
     AcemcpTool::trigger_index_update(project_root_path)
@@ -703,6 +704,10 @@ pub fn stop_all_watching() -> Result<(), String> {
 // 辅助函数：规范化路径 key（去除扩展路径前缀，统一使用正斜杠）
 fn normalize_path_key(path: &str) -> String {
     let mut normalized = path.to_string();
+    // 尝试规范化路径（失败则保持原样）
+    if let Ok(canon) = std::path::PathBuf::from(path).canonicalize() {
+        normalized = canon.to_string_lossy().to_string();
+    }
     // 去除 Windows 扩展长度路径前缀
     if normalized.starts_with("\\\\?\\") {
         normalized = normalized[4..].to_string();
@@ -736,8 +741,19 @@ fn purge_project_index_records(project_root_path: &str, stop_watching: bool) -> 
     // 1. 从 projects.json 中删除项目的 blob 列表
     let projects_path = data_dir.join("projects.json");
     if projects_path.exists() {
-        if let Ok(data) = fs::read_to_string(&projects_path) {
-            if let Ok(mut projects) = serde_json::from_str::<HashMap<String, Vec<String>>>(&data) {
+        match fs::read_to_string(&projects_path) {
+            Ok(data) => {
+                let mut needs_write = false;
+                let mut projects: HashMap<String, Vec<String>> = match serde_json::from_str(&data) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        log::warn!("[purge_project_index_records] projects.json 解析失败，将重置文件: {}", e);
+                        needs_write = true;
+                        projects_deleted = true;
+                        HashMap::new()
+                    }
+                };
+
                 let existing_keys: Vec<&String> = projects.keys().collect();
                 log::info!("[purge_project_index_records] projects.json 中现有项目: {:?}", existing_keys);
 
@@ -748,14 +764,23 @@ fn purge_project_index_records(project_root_path: &str, stop_watching: bool) -> 
                 if let Some(key) = key_to_remove {
                     log::info!("[purge_project_index_records] 找到匹配的 key: {}", key);
                     projects.remove(&key);
-                    if let Ok(new_data) = serde_json::to_string_pretty(&projects) {
-                        let _ = fs::write(&projects_path, new_data);
-                        log::info!("[purge_project_index_records] ✓ 已从 projects.json 删除项目: {}", key);
-                        projects_deleted = true;
-                    }
+                    needs_write = true;
+                    projects_deleted = true;
+                } else if needs_write {
+                    log::warn!("[purge_project_index_records] 未找到匹配项目，但 projects.json 已被重置");
                 } else {
                     log::warn!("[purge_project_index_records] ✗ 在 projects.json 中未找到匹配的项目，规范化路径: {}", normalized_root);
                 }
+
+                if needs_write {
+                    let new_data = serde_json::to_string_pretty(&projects)
+                        .map_err(|e| format!("序列化 projects.json 失败: {} (路径: {})", e, projects_path.display()))?;
+                    fs::write(&projects_path, new_data)
+                        .map_err(|e| format!("写入 projects.json 失败: {} (路径: {})", e, projects_path.display()))?;
+                }
+            }
+            Err(e) => {
+                return Err(format!("读取 projects.json 失败: {} (路径: {})", e, projects_path.display()));
             }
         }
     } else {
@@ -765,30 +790,41 @@ fn purge_project_index_records(project_root_path: &str, stop_watching: bool) -> 
     // 2. 从 projects_status.json 中删除项目状态
     let status_path = data_dir.join("projects_status.json");
     if status_path.exists() {
-        if let Ok(data) = fs::read_to_string(&status_path) {
-            if let Ok(mut status) = serde_json::from_str::<serde_json::Value>(&data) {
-                if let Some(projects) = status.get_mut("projects") {
-                    if let Some(map) = projects.as_object_mut() {
-                        let existing_keys: Vec<&String> = map.keys().collect();
-                        log::info!("[purge_project_index_records] projects_status.json 中现有项目: {:?}", existing_keys);
-
-                        let key_to_remove: Option<String> = map.keys()
-                            .find(|k| normalize_path_key(k) == normalized_root)
-                            .cloned();
-
-                        if let Some(key) = key_to_remove {
-                            log::info!("[purge_project_index_records] 找到匹配的 key: {}", key);
-                            map.remove(&key);
-                            if let Ok(new_data) = serde_json::to_string_pretty(&status) {
-                                let _ = fs::write(&status_path, new_data);
-                                log::info!("[purge_project_index_records] ✓ 已从 projects_status.json 删除项目: {}", key);
-                                status_deleted = true;
-                            }
-                        } else {
-                            log::warn!("[purge_project_index_records] ✗ 在 projects_status.json 中未找到匹配的项目，规范化路径: {}", normalized_root);
-                        }
+        match fs::read_to_string(&status_path) {
+            Ok(data) => {
+                let mut needs_write = false;
+                let mut status: ProjectsIndexStatus = match serde_json::from_str(&data) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        log::warn!("[purge_project_index_records] projects_status.json 解析失败，将重置文件: {}", e);
+                        needs_write = true;
+                        status_deleted = true;
+                        ProjectsIndexStatus::default()
                     }
+                };
+
+                let existing_keys: Vec<&String> = status.projects.keys().collect();
+                log::info!("[purge_project_index_records] projects_status.json 中现有项目: {:?}", existing_keys);
+
+                if status.projects.remove(&normalized_root).is_some() {
+                    needs_write = true;
+                    status_deleted = true;
+                    log::info!("[purge_project_index_records] ✓ 已从 projects_status.json 删除项目: {}", normalized_root);
+                } else if needs_write {
+                    log::warn!("[purge_project_index_records] 未找到匹配项目，但 projects_status.json 已被重置");
+                } else {
+                    log::warn!("[purge_project_index_records] ✗ 在 projects_status.json 中未找到匹配的项目，规范化路径: {}", normalized_root);
                 }
+
+                if needs_write {
+                    let new_data = serde_json::to_string_pretty(&status)
+                        .map_err(|e| format!("序列化 projects_status.json 失败: {} (路径: {})", e, status_path.display()))?;
+                    fs::write(&status_path, new_data)
+                        .map_err(|e| format!("写入 projects_status.json 失败: {} (路径: {})", e, status_path.display()))?;
+                }
+            }
+            Err(e) => {
+                return Err(format!("读取 projects_status.json 失败: {} (路径: {})", e, status_path.display()));
             }
         }
     } else {
