@@ -57,6 +57,8 @@ const showSyncMenu = ref(false)
 // 嵌套项目状态
 const nestedStatus = ref<ProjectWithNestedStatus | null>(null)
 const loadingNested = ref(false)
+// 记录嵌套项目加载错误（用于前端显性提示）
+const nestedError = ref<string | null>(null)
 
 // ==================== 计算属性 ====================
 
@@ -141,11 +143,31 @@ const indexedFiles = computed(() => {
   return props.projectStatus?.indexed_files ?? 0
 })
 
-// 待处理文件数
-const pendingFiles = computed(() => props.projectStatus?.pending_files ?? 0)
+// 待处理文件数（包含嵌套项目时汇总）
+const pendingFiles = computed(() => {
+  if (hasNestedProjects.value && nestedStatus.value) {
+    let pending = nestedStatus.value.root_status.pending_files
+    for (const np of nestedStatus.value.nested_projects) {
+      if (np.index_status)
+        pending += np.index_status.pending_files
+    }
+    return pending
+  }
+  return props.projectStatus?.pending_files ?? 0
+})
 
-// 失败文件数
-const failedFiles = computed(() => props.projectStatus?.failed_files ?? 0)
+// 失败文件数（包含嵌套项目时汇总）
+const failedFiles = computed(() => {
+  if (hasNestedProjects.value && nestedStatus.value) {
+    let failed = nestedStatus.value.root_status.failed_files
+    for (const np of nestedStatus.value.nested_projects) {
+      if (np.index_status)
+        failed += np.index_status.failed_files
+    }
+    return failed
+  }
+  return props.projectStatus?.failed_files ?? 0
+})
 
 // 格式化最后同步时间
 const lastSyncTime = computed(() => {
@@ -185,6 +207,7 @@ async function fetchNestedStatus() {
     return
 
   loadingNested.value = true
+  nestedError.value = null
   try {
     const result = await invoke<ProjectWithNestedStatus>('get_acemcp_project_with_nested', {
       projectRootPath: props.projectRoot,
@@ -193,6 +216,7 @@ async function fetchNestedStatus() {
   }
   catch (err) {
     console.error('获取嵌套项目状态失败:', err)
+    nestedError.value = String(err)
   }
   finally {
     loadingNested.value = false
@@ -249,6 +273,7 @@ function getNestedStatusText(np: NestedProjectInfo): string {
 // 监听项目路径变化，重新加载嵌套状态
 watch(() => props.projectRoot, () => {
   nestedStatus.value = null
+  nestedError.value = null
   if (isExpanded.value)
     fetchNestedStatus()
 })
@@ -339,7 +364,7 @@ onMounted(() => {
       <n-collapse-transition :show="isExpanded">
         <div class="panel-content">
           <!-- 嵌套项目区域（如果有） -->
-          <div v-if="hasNestedProjects" class="nested-projects-section">
+          <div v-if="hasNestedProjects || nestedError" class="nested-projects-section">
             <div class="section-header">
               <div class="i-carbon-folder-parent section-icon" />
               <span class="section-title">Git 子项目</span>
@@ -350,6 +375,11 @@ onMounted(() => {
                 <div class="skeleton-icon" />
                 <div class="skeleton-text" />
               </div>
+            </div>
+            <!-- 错误提示 -->
+            <div v-else-if="nestedError" class="nested-error">
+              <div class="i-carbon-warning-alt" />
+              <span>{{ nestedError }}</span>
             </div>
             <!-- 嵌套项目列表 -->
             <div v-else class="nested-list">
@@ -597,6 +627,18 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 嵌套项目错误提示 */
+.nested-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.08);
+  color: rgba(248, 113, 113, 0.9);
+  font-size: 12px;
 }
 
 .skeleton-item {

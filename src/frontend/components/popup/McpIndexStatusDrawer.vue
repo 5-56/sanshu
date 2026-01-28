@@ -61,6 +61,8 @@ const showOnlyPending = ref(false)
 // 嵌套项目状态
 const nestedStatus = ref<ProjectWithNestedStatus | null>(null)
 const loadingNested = ref(false)
+// 记录嵌套项目加载错误（用于前端显性提示）
+const nestedError = ref<string | null>(null)
 
 const message = useMessage()
 
@@ -305,6 +307,7 @@ async function fetchNestedStatus() {
     return
 
   loadingNested.value = true
+  nestedError.value = null
   try {
     const result = await invoke<ProjectWithNestedStatus>('get_acemcp_project_with_nested', {
       projectRootPath: props.projectRoot,
@@ -313,6 +316,7 @@ async function fetchNestedStatus() {
   }
   catch (err) {
     console.error('获取嵌套项目状态失败:', err)
+    nestedError.value = String(err)
   }
   finally {
     loadingNested.value = false
@@ -350,11 +354,16 @@ function getNestedStatusText(np: NestedProjectInfo): string {
   return `${status.indexed_files}/${status.total_files}`
 }
 
-// 当弹窗打开且有项目路径时，自动加载文件状态和嵌套项目状态
+// 当弹窗打开或项目路径变化时，刷新文件状态与嵌套项目状态
 watch(
-  () => props.show,
-  (visible) => {
-    if (visible && props.projectRoot) {
+  () => [props.show, props.projectRoot],
+  ([visible, root]) => {
+    if (visible && root) {
+      // 重置状态，避免切换项目时显示旧数据
+      filesStatus.value = null
+      nestedStatus.value = null
+      filesError.value = null
+      nestedError.value = null
       fetchFilesStatus()
       fetchNestedStatus()
     }
@@ -526,7 +535,7 @@ function handleCopyPath() {
         </div>
 
         <!-- 嵌套项目区域（如果有） -->
-        <div v-if="hasNestedProjects" class="nested-projects-card">
+        <div v-if="hasNestedProjects || nestedError" class="nested-projects-card">
           <div class="nested-card__header">
             <div class="i-carbon-folder-parent nested-card__icon" />
             <span class="nested-card__title">Git 子项目</span>
@@ -538,6 +547,11 @@ function handleCopyPath() {
               <div class="skeleton-icon" />
               <div class="skeleton-text" />
             </div>
+          </div>
+          <!-- 错误提示 -->
+          <div v-else-if="nestedError" class="nested-error">
+            <div class="i-carbon-warning-alt" />
+            <span>{{ nestedError }}</span>
           </div>
           <!-- 嵌套项目列表 -->
           <div v-else class="nested-card__list">
@@ -1143,6 +1157,17 @@ function handleCopyPath() {
   font-weight: 600;
   background: rgba(52, 211, 153, 0.2);
   color: rgba(52, 211, 153, 0.95);
+}
+
+.nested-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.08);
+  color: rgba(248, 113, 113, 0.9);
+  font-size: 12px;
 }
 
 .nested-card__list {

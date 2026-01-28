@@ -593,7 +593,12 @@ pub async fn get_acemcp_project_files_status(
 /// 用于前端展示包含多个 Git 子仓库的项目结构
 #[tauri::command]
 pub fn get_acemcp_project_with_nested(project_root_path: String) -> Result<ProjectWithNestedStatus, String> {
-    Ok(AcemcpTool::get_project_with_nested_status(project_root_path))
+    // 关键校验：目录不存在时直接返回错误
+    if !check_directory_exists(project_root_path.clone())? {
+        return Err(format!("项目根目录不存在: {}", project_root_path));
+    }
+    AcemcpTool::get_project_with_nested_status(project_root_path)
+        .map_err(|e| e.to_string())
 }
 
 /// 手动触发索引更新

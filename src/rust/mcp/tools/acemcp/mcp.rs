@@ -309,61 +309,90 @@ impl AcemcpTool {
     /// 
     /// 该方法会扫描项目根目录下的直接子目录，检测哪些是独立的 Git 仓库，
     /// 并返回每个子项目的索引状态。用于前端展示多项目结构。
-    pub fn get_project_with_nested_status(project_root_path: String) -> ProjectWithNestedStatus {
+    pub fn get_project_with_nested_status(project_root_path: String) -> Result<ProjectWithNestedStatus> {
         let root_path = PathBuf::from(&project_root_path);
+        // 关键校验：路径不存在时直接返回错误，避免前端静默失败
+        if !root_path.exists() || !root_path.is_dir() {
+            anyhow::bail!("项目根目录不存在: {}", project_root_path);
+        }
         let root_status = get_project_status(&project_root_path);
         
         let mut nested_projects = Vec::new();
         let mut regular_directories = Vec::new();
+
+        // 从配置读取排除模式，用于过滤嵌套目录（与索引阶段保持一致）
+        let exclude_patterns = crate::config::load_standalone_config()
+            .ok()
+            .and_then(|c| c.mcp_config.acemcp_exclude_patterns)
+            .unwrap_or_else(|| {
+                vec![
+                    "node_modules".to_string(),
+                    ".git".to_string(),
+                    "target".to_string(),
+                    "dist".to_string(),
+                ]
+            });
+        let exclude_globset = if exclude_patterns.is_empty() {
+            None
+        } else {
+            match build_exclude_globset(&exclude_patterns) {
+                Ok(gs) => Some(gs),
+                Err(e) => {
+                    log_debug!("构建排除模式失败，将忽略目录过滤: {}", e);
+                    None
+                }
+            }
+        };
         
         // 扫描直接子目录（仅第一层）
-        if let Ok(entries) = fs::read_dir(&root_path) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
+        let entries = fs::read_dir(&root_path)
+            .map_err(|e| anyhow::anyhow!("读取项目根目录失败: {}", e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| anyhow::anyhow!("读取目录条目失败: {}", e))?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            
+            let dir_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            
+            // 跳过隐藏目录
+            if dir_name.starts_with('.') {
+                continue;
+            }
+            // 使用配置排除目录/路径（支持 glob）
+            if should_exclude(&path, &root_path, exclude_globset.as_ref()) {
+                continue;
+            }
+            
+            // 检测是否是 Git 仓库
+            let git_dir = path.join(".git");
+            let is_git_repo = git_dir.exists() && git_dir.is_dir();
+            
+            if is_git_repo {
+                // 获取子项目的索引状态
+                let sub_path_str = normalize_project_path(&path.to_string_lossy());
+                let sub_status = get_project_status(&sub_path_str);
                 
-                let dir_name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                
-                // 跳过隐藏目录和常见排除目录
-                if dir_name.starts_with('.') 
-                    || dir_name == "node_modules" 
-                    || dir_name == "target" 
-                    || dir_name == "dist" 
-                {
-                    continue;
-                }
-                
-                // 检测是否是 Git 仓库
-                let git_dir = path.join(".git");
-                let is_git_repo = git_dir.exists() && git_dir.is_dir();
-                
-                if is_git_repo {
-                    // 获取子项目的索引状态
-                    let sub_path_str = normalize_project_path(&path.to_string_lossy());
-                    let sub_status = get_project_status(&sub_path_str);
-                    
-                    // 粗略估计文件数量（使用索引状态中的 total_files，如果没有则设为 0）
-                    let file_count = if sub_status.status != IndexStatus::Idle {
-                        sub_status.total_files
-                    } else {
-                        0
-                    };
-                    
-                    nested_projects.push(NestedProjectInfo {
-                        relative_path: dir_name,
-                        absolute_path: sub_path_str,
-                        is_git_repo: true,
-                        index_status: Some(sub_status),
-                        file_count,
-                    });
+                // 粗略估计文件数量（使用索引状态中的 total_files，如果没有则设为 0）
+                let file_count = if sub_status.status != IndexStatus::Idle {
+                    sub_status.total_files
                 } else {
-                    regular_directories.push(dir_name);
-                }
+                    0
+                };
+                
+                nested_projects.push(NestedProjectInfo {
+                    relative_path: dir_name,
+                    absolute_path: sub_path_str,
+                    is_git_repo: true,
+                    index_status: Some(sub_status),
+                    file_count,
+                });
+            } else {
+                regular_directories.push(dir_name);
             }
         }
         
@@ -371,11 +400,11 @@ impl AcemcpTool {
         nested_projects.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
         regular_directories.sort();
         
-        ProjectWithNestedStatus {
+        Ok(ProjectWithNestedStatus {
             root_status,
             nested_projects,
             regular_directories,
-        }
+        })
     }
 }
 
