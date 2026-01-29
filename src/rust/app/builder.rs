@@ -85,6 +85,7 @@ pub fn build_tauri_app() -> Builder<tauri::Wry> {
             crate::mcp::tools::acemcp::commands::get_acemcp_index_status,
             crate::mcp::tools::acemcp::commands::get_all_acemcp_index_status,
             crate::mcp::tools::acemcp::commands::get_acemcp_project_files_status,
+            crate::mcp::tools::acemcp::commands::get_acemcp_project_with_nested,
             crate::mcp::tools::acemcp::commands::trigger_acemcp_index_update,
             crate::mcp::tools::acemcp::commands::trigger_acemcp_index_rebuild,
             crate::mcp::tools::acemcp::commands::get_auto_index_enabled,
