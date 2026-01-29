@@ -17,6 +17,7 @@ export interface ProjectIndexStatus {
   last_failure_time: string | null
   last_error: string | null
   directory_stats: Record<string, [number, number]> // 目录路径 -> [总文件数, 已索引文件数]
+  recent_indexed_files?: string[] // 最近增量索引的文件列表（最多 5 个）
 }
 
 export interface ProjectsIndexStatus {

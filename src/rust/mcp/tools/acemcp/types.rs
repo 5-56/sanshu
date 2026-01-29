@@ -85,6 +85,9 @@ pub struct ProjectIndexStatus {
     pub last_error: Option<String>,
     /// 按目录聚合的统计信息（目录路径 -> (已索引, 待处理)）
     pub directory_stats: HashMap<String, (usize, usize)>,
+    /// 最近增量索引的文件列表（最多保留 5 个，相对路径）
+    #[serde(default)]
+    pub recent_indexed_files: Vec<String>,
 }
 
 impl Default for ProjectIndexStatus {
@@ -101,6 +104,7 @@ impl Default for ProjectIndexStatus {
             last_failure_time: None,
             last_error: None,
             directory_stats: HashMap::new(),
+            recent_indexed_files: Vec::new(),
         }
     }
 }

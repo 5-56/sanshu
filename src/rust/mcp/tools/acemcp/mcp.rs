@@ -1241,6 +1241,13 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
         status.last_success_time.is_none()
     };
 
+    // 提取最近增量索引的文件路径（从 new_blobs 中获取，最多 5 个）
+    let recent_files: Vec<String> = new_blobs
+        .iter()
+        .map(|b| b.path.clone())
+        .take(5)
+        .collect();
+
     // 更新状态：索引成功完成
     let _ = update_project_status(project_root_path, |status| {
         status.status = IndexStatus::Synced;
@@ -1249,6 +1256,10 @@ pub(crate) async fn update_index(config: &AcemcpConfig, project_root_path: &str)
         status.pending_files = 0;
         status.last_success_time = Some(chrono::Utc::now());
         status.last_error = None;
+        // 仅在有新增文件时更新最近索引列表
+        if !recent_files.is_empty() {
+            status.recent_indexed_files = recent_files;
+        }
     });
 
     // 首次成功索引时，写入 ji 记忆

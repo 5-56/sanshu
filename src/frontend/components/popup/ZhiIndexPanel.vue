@@ -9,9 +9,9 @@
  *    - 统计卡片 + 同步操作按钮
  * 3. 智能降级：根据 sou 启用状态和 ACE 配置状态显示不同引导
  */
-import type { NestedProjectInfo, ProjectIndexStatus, ProjectWithNestedStatus } from '../../types/tauri'
 import { invoke } from '@tauri-apps/api/core'
 import { computed, h, onMounted, ref, watch } from 'vue'
+import type { NestedProjectInfo, ProjectIndexStatus, ProjectWithNestedStatus } from '../../types/tauri'
 
 // ==================== Props & Emits ====================
 
@@ -199,6 +199,32 @@ const lastSyncTime = computed(() => {
 // 是否正在执行同步操作
 const isSyncing = computed(() => props.resyncLoading || props.isIndexing)
 
+// 项目根目录名称（仅显示最后一段）
+const projectName = computed(() => {
+  if (!props.projectRoot)
+    return null
+  // 兼容 Windows 和 Unix 路径分隔符
+  const segments = props.projectRoot.replace(/\\/g, '/').split('/')
+  return segments[segments.length - 1] || null
+})
+
+// 最近增量索引的文件列表
+const recentIndexedFiles = computed(() => {
+  return props.projectStatus?.recent_indexed_files ?? []
+})
+
+// 最近索引文件的显示文本
+const recentFilesText = computed(() => {
+  const files = recentIndexedFiles.value
+  if (files.length === 0)
+    return null
+
+  const firstName = files[0].split('/').pop() || files[0]
+  if (files.length === 1)
+    return firstName
+  return `${firstName} 等 ${files.length} 个`
+})
+
 // ==================== 事件处理 ====================
 
 // 加载嵌套项目状态
@@ -351,7 +377,40 @@ onMounted(() => {
             <span class="status-time">上次同步 {{ lastSyncTime }}</span>
           </template>
         </div>
-        <div class="header-right">
+        <div class="header-right flex items-center gap-2">
+          <!-- 最近索引文件信息（响应式隐藏） -->
+          <n-tooltip v-if="recentFilesText" trigger="hover" :delay="300">
+            <template #trigger>
+              <div class="hidden md:flex items-center gap-1 text-white/50 text-[11px] max-w-[100px]">
+                <div class="i-carbon-document shrink-0 text-white/40 text-xs" />
+                <span class="truncate">{{ recentFilesText }}</span>
+              </div>
+            </template>
+            <div class="flex flex-col gap-1 max-w-[280px]">
+              <div v-for="(file, idx) in recentIndexedFiles.slice(0, 5)" :key="idx" class="text-xs truncate">
+                {{ file }}
+              </div>
+              <div class="text-[10px] text-white/40 mt-1 pt-1 border-t border-white/10">
+                {{ recentIndexedFiles.length > 5
+                  ? `共 ${recentIndexedFiles.length} 个文件，仅显示最近 5 个`
+                  : '最近增量索引的文件' }}
+              </div>
+            </div>
+          </n-tooltip>
+          <!-- 分隔符 -->
+          <span v-if="recentFilesText && projectName" class="text-white/25 text-xs hidden md:inline">·</span>
+          <!-- 项目根目录名称 -->
+          <n-tooltip v-if="projectName" trigger="hover" :delay="300">
+            <template #trigger>
+              <div class="flex items-center gap-1.5 text-white/55 text-xs max-w-[120px]">
+                <div class="i-carbon-folder shrink-0 text-white/40 text-sm" />
+                <span class="truncate">{{ projectName }}</span>
+              </div>
+            </template>
+            <span class="text-xs">{{ props.projectRoot }}</span>
+          </n-tooltip>
+          <!-- 分隔符 -->
+          <span v-if="projectName" class="text-white/25 text-xs">·</span>
           <!-- 展开/收起图标 -->
           <div
             class="expand-icon"
