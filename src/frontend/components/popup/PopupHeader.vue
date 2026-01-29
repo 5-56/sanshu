@@ -74,7 +74,7 @@ function handleOpenIndexStatus() {
       <!-- 左侧：标题 -->
       <div class="flex items-center gap-3 min-w-0">
         <div class="w-3 h-3 rounded-full bg-primary-500" />
-        <h1 class="text-base font-medium text-white truncate">
+        <h1 class="text-base font-medium text-slate-800 dark:text-white truncate">
           三术 - 道生一，一生二，二生三，三生万物
         </h1>
       </div>
@@ -90,7 +90,7 @@ function handleOpenIndexStatus() {
           <template #trigger>
             <button
               type="button"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-xs text-white/85 transition-colors duration-150"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-slate-300/60 dark:border-white/15 bg-slate-100/60 dark:bg-white/5 hover:bg-slate-200/60 dark:hover:bg-white/10 text-xs text-slate-700 dark:text-white/85 transition-colors duration-150"
               @click="handleOpenIndexStatus"
             >
               <div
@@ -115,18 +115,18 @@ function handleOpenIndexStatus() {
             <div v-if="mcpIsIndexing">
               正在索引中，稍后搜索结果会更加完整。
             </div>
-            <div v-if="(props.mcpFailedFiles ?? 0) > 0" class="text-red-400">
+            <div v-if="(props.mcpFailedFiles ?? 0) > 0" class="text-red-600 dark:text-red-400">
               最近失败文件数：{{ props.mcpFailedFiles }}
             </div>
-            <div v-if="props.mcpLastFailureTime" class="text-red-300">
+            <div v-if="props.mcpLastFailureTime" class="text-red-600 dark:text-red-300">
               最近失败时间：{{ props.mcpLastFailureTime }}
             </div>
-            <div v-if="props.mcpLastError" class="text-red-300 line-clamp-3">
+            <div v-if="props.mcpLastError" class="text-red-600 dark:text-red-300 line-clamp-3">
               最近错误：{{ props.mcpLastError }}
             </div>
             <div
               v-else-if="!mcpIsIndexing && (props.mcpFailedFiles ?? 0) === 0"
-              class="text-green-300"
+              class="text-green-600 dark:text-green-300"
             >
               最近无错误，索引状态稳定。
             </div>
@@ -145,7 +145,7 @@ function handleOpenIndexStatus() {
             <template #icon>
               <div
                 :class="props.alwaysOnTop ? 'i-carbon-pin-filled' : 'i-carbon-pin'"
-                class="w-4 h-4 text-white"
+                class="w-4 h-4 text-slate-700 dark:text-white"
               />
             </template>
           </n-button>
@@ -159,7 +159,7 @@ function handleOpenIndexStatus() {
             <template #icon>
               <div
                 :class="props.showMainLayout ? 'i-carbon-chat' : 'i-carbon-settings'"
-                class="w-4 h-4 text-white"
+                class="w-4 h-4 text-slate-700 dark:text-white"
               />
             </template>
           </n-button>
@@ -171,7 +171,7 @@ function handleOpenIndexStatus() {
             @click="handleThemeChange"
           >
             <template #icon>
-              <ThemeIcon :theme="props.currentTheme" class="w-4 h-4 text-white" />
+              <ThemeIcon :theme="props.currentTheme" class="w-4 h-4 text-slate-700 dark:text-white" />
             </template>
           </n-button>
         </n-space>
